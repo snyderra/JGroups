@@ -34,6 +34,6 @@ public class TopoHeader extends Header {
     }
 
     public String toString() {
-        return type == 0? "topo req" : "topo rsp";
+        return type == 0? "TOPO-REQ" : "TOPO-RSP";
     }
 }

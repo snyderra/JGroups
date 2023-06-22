@@ -6,6 +6,7 @@ import org.jgroups.conf.AttributeType;
 import org.jgroups.conf.ConfiguratorFactory;
 import org.jgroups.conf.XmlNode;
 import org.jgroups.protocols.relay.Topology.MemberInfo;
+import org.jgroups.protocols.relay.Topology.Members;
 import org.jgroups.protocols.relay.config.RelayConfig;
 import org.jgroups.stack.IpAddress;
 import org.jgroups.stack.Protocol;
@@ -136,14 +137,8 @@ public class RELAY2 extends Protocol {
 
     protected final LongAdder                          forward_to_local_mbr_time=new LongAdder();
 
-    /** Number of messages delivered locally, e.g. received and delivered to self */
-    protected final LongAdder                          local_deliveries=new LongAdder();
-
     @Component(description="Maintains a cache of sites and members",name="topo")
     protected Topology                                 topo=new Topology(this);
-
-    /** Total time (ms) for received messages that are delivered locally */
-    protected final LongAdder                          local_delivery_time=new LongAdder();
 
     /** Log to suppress identical errors for messages to non-existing sites ('no route to site X') */
     protected SuppressLog<String>                      suppress_log_no_route;
@@ -238,16 +233,6 @@ public class RELAY2 extends Protocol {
     public long getAvgMsgsForwardingToLocalMbr() {return getTimeForwardingToLocalMbr() > 0?
                                                   (long)(getNumForwardedToLocalMbr() / (getTimeForwardingToLocalMbr()/1000.0)) : 0;}
 
-    @ManagedAttribute(description="Number of messages delivered locally, e.g. received and delivered to self")
-    public long getNumLocalDeliveries() {return local_deliveries.sum();}
-
-    @ManagedAttribute(description="The total time (ms) spent delivering received messages locally",type=AttributeType.TIME)
-    public long getTimeDeliveringLocally() {return TimeUnit.MILLISECONDS.convert(local_delivery_time.sum(),TimeUnit.NANOSECONDS);}
-
-    @ManagedAttribute(description="The average number of messages / s for delivering received messages locally")
-    public long getAvgMsgsDeliveringLocally() {return getTimeDeliveringLocally() > 0?
-                                               (long)(getNumLocalDeliveries() / (getTimeDeliveringLocally()/1000.0)) : 0;}
-
     @ManagedAttribute(description="Whether or not this instance is a site master")
     public boolean isSiteMaster() {return relayer != null;}
 
@@ -271,8 +256,6 @@ public class RELAY2 extends Protocol {
         relayed_time.reset();
         forward_to_local_mbr.reset();
         forward_to_local_mbr_time.reset();
-        local_deliveries.reset();
-        local_delivery_time.reset();
         clearNoRouteCache();
     }
 
@@ -454,12 +437,7 @@ public class RELAY2 extends Protocol {
         if(target.getSite().equals(site)) {
             if(local_addr.equals(target) || (target instanceof SiteMaster && is_site_master)) {
                 // we cannot simply pass msg down, as the transport doesn't know how to send a message to a (e.g.) SiteMaster
-                long start=stats? System.nanoTime() : 0;
                 forwardTo(local_addr, target, sender, msg, false);
-                if(stats) {
-                    local_delivery_time.add(System.nanoTime() - start);
-                    local_deliveries.increment();
-                }
             }
             else
                 deliverLocally(target, sender, msg);
@@ -502,7 +480,7 @@ public class RELAY2 extends Protocol {
         if(hdr == null) {
             TopoHeader topo_hdr=msg.getHeader(TOPO_ID);
             if(topo_hdr != null) {
-                handleTopo(topo_hdr, sender, msg, false);
+                handleTopo(topo_hdr, sender, msg);
                 return null;
             }
             deliver(dest, sender, msg); // fixes https://issues.redhat.com/browse/JGRP-2710
@@ -532,7 +510,7 @@ public class RELAY2 extends Protocol {
             if(hdr == null) {
                 TopoHeader topo_hdr=msg.getHeader(TOPO_ID);
                 if(topo_hdr != null) {
-                    handleTopo(topo_hdr, sender, msg, false);
+                    handleTopo(topo_hdr, sender, msg);
                     it.remove();
                 }
             }
@@ -565,27 +543,29 @@ public class RELAY2 extends Protocol {
             up_prot.up(batch);
     }
 
-    protected void handleTopo(TopoHeader hdr, Address sender, Message msg, boolean send_rsps_for_entire_view) {
+    protected void handleTopo(TopoHeader hdr, Address sender, Message msg) {
         switch(hdr.type()) {
             case TopoHeader.REQ:
-                List<Address> targets=send_rsps_for_entire_view? new ArrayList<>(members) : List.of(local_addr);
-                for(Address t: targets)
-                    sendResponseFor(t, sender);
+                if(is_site_master)
+                    sendResponseFor(members, sender);
                 break;
             case TopoHeader.RSP:
-                MemberInfo mi=msg.getObject();
-                topo.handleResponse(mi.site(), mi);
+                Members mbrs=msg.getObject();
+                topo.handleResponse(mbrs);
                 break;
         }
     }
 
-    protected void sendResponseFor(Address mbr, Address dest) {
-        SiteAddress my_addr=mbr instanceof SiteMaster? new SiteMaster(((SiteMaster)mbr).getSite())
-          : new SiteUUID((UUID)mbr, NameCache.get(mbr), site);
-        MemberInfo mi=new MemberInfo(this.site, my_addr,
-                                     (IpAddress)getPhysicalAddress(mbr),
-                                     site_masters.contains(mbr));
-        Message rsp=new ObjectMessage(dest, mi).putHeader(TOPO_ID, new TopoHeader(TopoHeader.RSP));
+    protected void sendResponseFor(List<Address> mbrs, Address dest) {
+        Members m=new Members(this.site);
+        for(Address mbr: mbrs) {
+            SiteAddress addr=mbr instanceof SiteMaster? new SiteMaster(((SiteMaster)mbr).getSite())
+              : new SiteUUID((UUID)mbr, NameCache.get(mbr), site);
+            MemberInfo mi=new MemberInfo(this.site, addr, (IpAddress)getPhysicalAddress(mbr),
+                                         site_masters.contains(mbr));
+            m.addJoined(mi);
+        }
+        Message rsp=new ObjectMessage(dest, m).putHeader(TOPO_ID, new TopoHeader(TopoHeader.RSP));
         down(rsp);
     }
 
@@ -687,9 +667,10 @@ public class RELAY2 extends Protocol {
                 route((SiteAddress)hdr.final_dest, (SiteAddress)hdr.original_sender, msg);
                 break;
             case SITE_UNREACHABLE:
-                triggerSiteUnreachableEvent((SiteAddress)hdr.final_dest);
+                String unreachable_site=hdr.sites != null && !hdr.sites.isEmpty()? hdr.sites.iterator().next() : null;
+                if(unreachable_site != null)
+                    triggerSiteUnreachableEvent(new SiteMaster(unreachable_site));
                 break;
-            case HOST_UNREACHABLE:
             default:
                 log.error("type " + hdr.type + " unknown");
                 break;
@@ -707,9 +688,8 @@ public class RELAY2 extends Protocol {
     protected void route(SiteAddress dest, SiteAddress sender, Message msg) {
         String target_site=dest.getSite();
         if(target_site.equals(site)) {
-            if(local_addr.equals(dest) || ((dest instanceof SiteMaster) && is_site_master)) {
+            if(local_addr.equals(dest) || is_site_master && dest instanceof SiteMaster)
                 deliver(dest, sender, msg);
-            }
             else
                 deliverLocally(dest, sender, msg); // send to member in same local site
             return;
@@ -795,8 +775,8 @@ public class RELAY2 extends Protocol {
         }
         // send message back to the src node.
         Message msg=new EmptyMessage(src).setFlag(Message.Flag.OOB)
-          .putHeader(id,new Relay2Header(SITE_UNREACHABLE, new SiteMaster(target_site), null));
-        down_prot.down(msg);
+          .putHeader(id, new Relay2Header(SITE_UNREACHABLE).setSites(target_site));
+        down(msg);
     }
 
     protected void forwardTo(Address next_dest, SiteAddress final_dest, Address original_sender, final Message msg,
@@ -847,18 +827,13 @@ public class RELAY2 extends Protocol {
         try {
             TopoHeader hdr=msg.getHeader(TOPO_ID);
             if(hdr != null) {
-                handleTopo(hdr, sender, msg, dest instanceof SiteMaster);
+                handleTopo(hdr, sender, msg);
                 return;
             }
             Message copy=copy(msg).setDest(dest).setSrc(sender);
             if(log.isTraceEnabled())
                 log.trace(local_addr + ": delivering message from " + sender);
-            long start=stats? System.nanoTime() : 0;
             up_prot.up(copy);
-            if(stats) {
-                local_delivery_time.add(System.nanoTime() - start);
-                local_deliveries.increment();
-            }
         }
         catch(Exception e) {
             log.error(Util.getMessage("FailedDeliveringMessage"), e);
@@ -931,6 +906,8 @@ public class RELAY2 extends Protocol {
 
     private void triggerSiteUnreachableEvent(SiteAddress remoteSite) {
         up_prot.up(new Event(Event.SITE_UNREACHABLE, remoteSite));
+        if(route_status_listener != null)
+            route_status_listener.sitesUnreachable(remoteSite.getSite());
     }
 
 }
