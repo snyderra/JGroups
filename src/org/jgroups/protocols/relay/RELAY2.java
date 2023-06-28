@@ -37,7 +37,7 @@ public class RELAY2 extends Protocol {
     protected static final short TOPO_ID=560; // defined in jg-protocol-ids.xml
 
     /* ------------------------------------------    Properties     ---------------------------------------------- */
-    @Property(description="Name of the site (needs to be defined in the configuration)",writable=false)
+    @Property(description="Name of the site; must be defined in the configuration",writable=false)
     protected String                                   site;
 
     @Property(description="Name of the relay configuration",writable=false)
@@ -433,33 +433,37 @@ public class RELAY2 extends Protocol {
         if(local_addr instanceof ExtendedUUID)
             ((ExtendedUUID)sender).addContents((ExtendedUUID)local_addr);
 
+        /*if(target instanceof SiteMaster) {
+            if(!is_site_master)
+                forwardToSiteMaster(sender, target, msg);
+            else {
+                if(target.getSite() == null) // send to *all* site masters
+                    sendToBridges(msg);
+                // deli
+            }
+            return null;
+        }*/
+
         // target is in the same site; we can deliver the message in our local cluster
-        if(target.getSite().equals(site)) {
+        if(site.equals(target.getSite())) {
+            // we're the target or we're the site master and need to forward the message to a member of the local cluster
             if(local_addr.equals(target) || (target instanceof SiteMaster && is_site_master)) {
                 // we cannot simply pass msg down, as the transport doesn't know how to send a message to a (e.g.) SiteMaster
                 forwardTo(local_addr, target, sender, msg, false);
             }
-            else
+            else // forward to another member of the local cluster
                 deliverLocally(target, sender, msg);
             return null;
         }
 
         // forward to the site master unless we're the site master (then route the message directly)
-        if(!is_site_master) {
-            long start=stats? System.nanoTime() : 0;
-            Address site_master=pickSiteMaster(sender);
-            if(site_master == null)
-                throw new IllegalStateException("site master is null");
-            forwardTo(site_master, target, sender, msg, max_site_masters == 1);
-            if(stats) {
-                forward_sm_time.add(System.nanoTime() - start);
-                forward_to_site_master.increment();
-            }
-        }
+        if(!is_site_master)
+            forwardToSiteMaster(sender, target, msg);
         else
             route(target, sender, msg);
         return null;
     }
+
 
 
     public Object up(Event evt) {
@@ -793,6 +797,17 @@ public class RELAY2 extends Protocol {
         down_prot.down(copy);
     }
 
+    protected void forwardToSiteMaster(Address sender, SiteAddress final_dest, Message msg) {
+        long start=stats? System.nanoTime() : 0;
+        Address site_master=pickSiteMaster(sender);
+        if(site_master == null)
+            throw new IllegalStateException("site master is null");
+        forwardTo(site_master, final_dest, sender, msg, max_site_masters == 1);
+        if(stats) {
+            forward_sm_time.add(System.nanoTime() - start);
+            forward_to_site_master.increment();
+        }
+    }
 
     protected void deliverLocally(SiteAddress dest, SiteAddress sender, Message msg) {
         Address local_dest;

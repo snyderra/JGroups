@@ -54,7 +54,7 @@ public class Topology {
      */
     @ManagedOperation(description="Fetches information (site, address, IP address) from all members of a given site")
     public Topology refresh(String site) {
-        Address dest=site != null? new SiteMaster(site) : null;
+        Address dest=new SiteMaster(site); // sent to all site masters if site == null
         Message topo_req=new EmptyMessage(dest).putHeader(RELAY2.TOPO_ID, new TopoHeader(TopoHeader.REQ));
         relay.down(topo_req);
         return this;
