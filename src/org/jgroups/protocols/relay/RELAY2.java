@@ -8,6 +8,7 @@ import org.jgroups.conf.XmlNode;
 import org.jgroups.protocols.relay.Topology.MemberInfo;
 import org.jgroups.protocols.relay.Topology.Members;
 import org.jgroups.protocols.relay.config.RelayConfig;
+import org.jgroups.stack.AddressGenerator;
 import org.jgroups.stack.IpAddress;
 import org.jgroups.stack.Protocol;
 import org.jgroups.util.UUID;
@@ -326,11 +327,15 @@ public class RELAY2 extends Protocol {
         log.trace("site configuration:\n" + site_config);
         if(enable_address_tagging) {
             JChannel ch=getProtocolStack().getChannel();
-            ch.addAddressGenerator(() -> {
-                ExtendedUUID retval=ExtendedUUID.randomUUID();
-                if(can_become_site_master)
-                    retval.setFlag(can_become_site_master_flag);
-                return retval;
+
+            ch.addAddressGenerator(new AddressGenerator() {
+                @Override public Address generateAddress() {return generateAddress(null);}
+                @Override public Address generateAddress(String name) {
+                    SiteUUID uuid=new SiteUUID(UUID.randomUUID(), name, site);
+                    if(can_become_site_master)
+                        uuid.setFlag(can_become_site_master_flag);
+                    return uuid;
+                }
             });
         }
         prots_above=getIdsAbove();
