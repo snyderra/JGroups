@@ -27,6 +27,10 @@ public class SiteMaster extends SiteUUID {
         return SiteMaster::new;
     }
 
+    public Type type() {
+        return site == null? Type.SM_ALL : Type.SM;
+    }
+
     public int compareTo(Address other) {
         if(other instanceof SiteMaster) {
             SiteMaster tmp=(SiteMaster)other;

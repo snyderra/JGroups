@@ -26,6 +26,9 @@ public class Relay2Header extends Header {
     public static final byte SITES_UP         = 4;
     public static final byte SITES_DOWN       = 5;
 
+    public static final byte TOPO_REQ         = 6;
+    public static final byte TOPO_RSP         = 7; // MemberInfo is the payload of the response message
+
     protected byte        type;
     protected Address     final_dest;
     protected Address     original_sender;
@@ -149,6 +152,8 @@ public class Relay2Header extends Header {
             case SITE_UNREACHABLE: return "SITE_UNREACHABLE";
             case SITES_UP:         return "SITES_UP";
             case SITES_DOWN:       return "SITES_DOWN";
+            case TOPO_REQ:         return "TOPO_REQ";
+            case TOPO_RSP:         return "TOPO_RSP";
             default:               return "<unknown>";
         }
     }
