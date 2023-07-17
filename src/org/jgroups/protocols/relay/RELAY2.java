@@ -24,6 +24,9 @@ import java.util.function.Supplier;
 
 import static org.jgroups.protocols.relay.Relay2Header.*;
 
+// todo: instead of sending one TOPO-RSP for *each* member, send one TOPO-RSP for *all* members -> 1 instead of N msgs
+// todo: check if copy is needed in reoute(), passUp() and deliver(); possibly pass a boolean as parameter (copy or not)
+
 /**
  * Provides relaying of messages between autonomous sites.<br/>
  * Design: ./doc/design/RELAY2.txt and at https://github.com/belaban/JGroups/blob/master/doc/design/RELAY2.txt.<br/>
