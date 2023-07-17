@@ -80,7 +80,7 @@ public class SiteUUID extends ExtendedUUID implements SiteAddress {
 
     public String print(boolean detailed) {
         String retval=name != null? name : NameCache.get(this);
-        return String.format("%s:%s %s", retval, site != null? site : "<all sites>", detailed? printOthers() : "");
+        return String.format("%s:%s%s", retval, site != null? site : "<all sites>", detailed? printOthers() : "");
     }
 
     @Override
