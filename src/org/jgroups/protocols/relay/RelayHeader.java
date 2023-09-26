@@ -4,6 +4,7 @@ import org.jgroups.Address;
 import org.jgroups.Global;
 import org.jgroups.Header;
 import org.jgroups.util.Bits;
+import org.jgroups.util.ByteArray;
 import org.jgroups.util.Util;
 
 import java.io.DataInput;
@@ -33,6 +34,7 @@ public class RelayHeader extends Header {
     protected Set<String> visited_sites;
     // used with TOPO_REQ: when set, return the entire cache, otherwise only information about the local members
     protected boolean     return_entire_cache;
+    protected ByteArray   headers; // marshalled headers (https://issues.redhat.com/browse/JGRP-2729)
 
 
     public RelayHeader() {
@@ -59,6 +61,8 @@ public class RelayHeader extends Header {
     public boolean      hasSites()                     {return sites != null && !sites.isEmpty();}
     public boolean      returnEntireCache()            {return return_entire_cache;}
     public RelayHeader  returnEntireCache(boolean b)   {return_entire_cache=b; return this;}
+    public ByteArray    headers()                      {return headers;}
+    public RelayHeader  headers(ByteArray ba)          {headers=ba; return this;}
 
     public String getSite() {
         if(sites == null || sites.isEmpty())
@@ -108,7 +112,7 @@ public class RelayHeader extends Header {
     public RelayHeader copy() {
         RelayHeader hdr=new RelayHeader(type, final_dest, original_sender)
           .addToSites(this.sites)
-          .addToVisitedSites(visited_sites).returnEntireCache(return_entire_cache);
+          .addToVisitedSites(visited_sites).returnEntireCache(return_entire_cache).headers(this.headers);
         assertNonNullSites();
         hdr.assertNonNullSites();
         return hdr;
@@ -118,7 +122,7 @@ public class RelayHeader extends Header {
     public int serializedSize() {
         assertNonNullSites();
         return Global.BYTE_SIZE*2 + Util.size(final_dest) + Util.size(original_sender) +
-          sizeOf(sites) + sizeOf(visited_sites);
+          sizeOf(sites) + sizeOf(visited_sites) + Global.BYTE_SIZE + (headers != null? headers().serializedSize() : 0);
     }
 
     @Override
@@ -138,6 +142,9 @@ public class RelayHeader extends Header {
                 Bits.writeString(s, out);
         }
         assertNonNullSites();
+        out.writeBoolean(headers != null);
+        if(headers != null)
+            headers.writeTo(out);
     }
 
     @Override
@@ -159,6 +166,10 @@ public class RelayHeader extends Header {
                 visited_sites.add(Bits.readString(in));
         }
         assertNonNullSites();
+        if(in.readBoolean()) {
+            headers=new ByteArray(null, 0, 0);
+            headers.readFrom(in);
+        }
     }
 
     public String toString() {
