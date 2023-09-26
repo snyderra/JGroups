@@ -2,11 +2,14 @@ package org.jgroups.protocols.relay;
 
 
 import org.jgroups.Address;
+import org.jgroups.BaseMessage;
 import org.jgroups.JChannel;
 import org.jgroups.Message;
 import org.jgroups.logging.Log;
+import org.jgroups.util.ByteArray;
 import org.jgroups.util.Util;
 
+import java.io.IOException;
 import java.util.Collection;
 
 import static org.jgroups.protocols.relay.RelayHeader.DATA;
@@ -75,12 +78,15 @@ public class Route implements Comparable<Route> {
     }
 
     protected Message createMessage(Address target, Address final_destination, Address original_sender,
-                                    final Message msg, Collection<String> visited_sites) {
+                                    final Message msg, Collection<String> visited_sites) throws IOException {
         Message copy=relay.copy(msg).setDest(target).setSrc(null);
+        ByteArray marshalled_hdrs=((BaseMessage)copy).writeHeaders();
         RelayHeader tmp=msg.getHeader(relay.getId());
         RelayHeader hdr=tmp != null? tmp.copy().setFinalDestination(final_destination).setOriginalSender(original_sender)
           : new RelayHeader(DATA, final_destination, original_sender);
-        hdr.addToVisitedSites(visited_sites);
+        hdr.addToVisitedSites(visited_sites).headers(marshalled_hdrs);
+        // to prevent local headers getting mixed up with bridge headers: https://issues.redhat.com/browse/JGRP-2729
+        copy.clearHeaders();
         copy.putHeader(relay.getId(), hdr);
         return copy;
     }
