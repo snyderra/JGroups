@@ -40,7 +40,6 @@ public class RelayTests {
         LOOPBACK=InetAddress.getLoopbackAddress();
     }
 
-
     protected static Protocol[] defaultStack(Protocol ... additional_protocols) {
         Protocol[] protocols={
           new TCP().setBindAddress(LOOPBACK),
