@@ -262,6 +262,15 @@ public class RELAY2 extends RELAY {
             log.warn("%s: received a message without a relay header; discarding it", local_addr);
             return;
         }
+        try {
+            msg.clearHeaders(); // remove all headers added by the bridge cluster
+            msg.putHeader(id, hdr);
+            ((BaseMessage)msg).readHeaders(hdr.headers());
+        }
+        catch(Exception ex) {
+            log.error("%s: failed handling message relayed from %s: %s", local_addr, msg.src(), ex);
+        }
+
         if(hdr.final_dest != null) {
             Message message=msg;
             RelayHeader header=hdr;
