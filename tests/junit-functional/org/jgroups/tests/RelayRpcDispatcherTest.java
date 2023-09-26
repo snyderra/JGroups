@@ -127,13 +127,13 @@ public class RelayRpcDispatcherTest {
 
         MethodCall call=new MethodCall(ServerObject.class.getMethod("foo"));
         System.out.println("B: call foo method on A");
-        Object rsp = rpcb.callRemoteMethod(a.getAddress(), call, new RequestOptions(ResponseMode.GET_ALL,5000));
+        Object rsp = rpcb.callRemoteMethod(a.getAddress(), call, new RequestOptions(ResponseMode.GET_ALL, 2000));
         System.out.println("RSP is: " + rsp );
         
         System.out.println("B: sending message 0 to the site master of SFO");
         Address sm_sfo=new SiteMaster(SFO);
         System.out.println("B: call foo method on SFO master site");
-        rsp = rpcb.callRemoteMethod(sm_sfo, call, new RequestOptions(ResponseMode.GET_ALL,15000));
+        rsp = rpcb.callRemoteMethod(sm_sfo, call, new RequestOptions(ResponseMode.GET_ALL, 5000));
         System.out.println("RSP is: " + rsp );
         
         System.out.println("B: call foo method on all members in site LON");
