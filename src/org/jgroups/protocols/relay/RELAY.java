@@ -336,8 +336,13 @@ public abstract class RELAY extends Protocol {
     }
 
     public Object down(Event evt) {
-        if(evt.getType() == Event.VIEW_CHANGE)
-            handleView(evt.getArg());
+        switch(evt.type()) {
+            case Event.VIEW_CHANGE:
+                handleView(evt.arg());
+                break;
+            case Event.IS_LOCAL:
+                return isLocal(evt.arg());
+        }
         return down_prot.down(evt);
     }
 
@@ -353,6 +358,10 @@ public abstract class RELAY extends Protocol {
 
     public String toString() {
         return String.format("%s%s", getClass().getSimpleName(), local_addr != null? String.format(" (%s)", local_addr) : "");
+    }
+
+    protected boolean isLocal(SiteMaster sm) {
+        return is_site_master && Objects.equals(site, sm.getSite());
     }
 
     /** Parses the configuration by reading the config file */

@@ -65,6 +65,7 @@ public class Event {
     public static final int SET_SECRET_KEY                     = 112; // arg = Tuple<SecretKey,byte[]> // PK+version
     public static final int UNLOCK_FORCE                       = 113; // arg = lock name
     public static final int INSTALL_MERGE_VIEW                 = 114; // arg = MergeView
+    public static final int IS_LOCAL                           = 115; // arg = SiteMaster(site), returns true / false
 
     public static final int USER_DEFINED                       = 1000; // arg = <user def., e.g. evt type + data>
 
@@ -153,6 +154,7 @@ public class Event {
             case SET_SECRET_KEY:         return "SET_SECRET_KEY";
             case UNLOCK_FORCE:           return "UNLOCK_FORCE";
             case INSTALL_MERGE_VIEW:     return "INSTALL_MERGE_VIEW";
+            case IS_LOCAL:               return "IS_LOCAL";
 
             case USER_DEFINED:           return "USER_DEFINED";
             default:                     return "UNDEFINED(" + t + ")";
