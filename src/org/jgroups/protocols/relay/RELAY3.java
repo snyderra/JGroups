@@ -68,7 +68,8 @@ public class RELAY3 extends RELAY {
     public Object down(Message msg) {
         //if(msg.isFlagSet(Flag.NO_RELAY))
           //  return down_prot.down(msg);
-        msg.src(local_addr);
+        if(msg.src() == null)
+            msg.src(local_addr);
         return process(true, msg);
     }
 
@@ -237,9 +238,17 @@ public class RELAY3 extends RELAY {
             log.warn("%s: received a message without a relay header; discarding it", local_addr);
             return;
         }
-        Message copy=copy(msg).dest(hdr.final_dest).src(hdr.original_sender).putHeader(id, hdr);
-        // todo: check if copy is needed!
-        process(true, copy);
+        try {
+            Message copy=copy(msg).dest(hdr.final_dest).src(hdr.original_sender);
+            copy.clearHeaders(); // remove all headers added by the bridge cluster
+            copy.putHeader(id, hdr);
+            ((BaseMessage)copy).readHeaders(hdr.headers());
+            // todo: check if copy is needed!
+            process(true, copy);
+        }
+        catch(Exception ex) {
+            log.error("%s: failed handling message relayed from %s: %s", local_addr, msg.src(), ex);
+        }
     }
 
     /** Handles SITES_UP/SITES_DOWN/TOPO_REQ/TOPO_RSP messages */
@@ -314,8 +323,8 @@ public class RELAY3 extends RELAY {
                 case UNICAST:
                     if(sameSite(dst)) {
                         if(down) {
-                            // no passUp() if dst == local_addr: we want the transport to use a separate thread to do
-                            // loopbacks
+                            // no passUp() if dst == local_addr: we want the transport to use a separate thread to
+                            // handle the loopback message!
                             return deliver(dst, msg,false);
                         }
                         return passUp(msg);
@@ -379,12 +388,13 @@ public class RELAY3 extends RELAY {
         if(sites.isEmpty()) // no sites in routing table
             return null;
         RelayHeader hdr=msg.getHeader(this.id);
-        Address dest=msg.dest(), sender=hdr != null && hdr.original_sender != null?
-          ((ExtendedUUID)hdr.getOriginalSender()).addContents((ExtendedUUID)local_addr) : local_addr;
-        // msg.src(sender); // todo: check if necessary
-
+        Address dest=msg.dest(), sender=msg.src();
+        if(sender == null) {
+            sender=hdr != null && hdr.original_sender != null?
+              ((ExtendedUUID)hdr.getOriginalSender()).addContents((ExtendedUUID)local_addr) : local_addr;
+        }
         Set<String> visited_sites=null;
-        if(dest == null || dest instanceof  SiteMaster && ((SiteMaster)dest).getSite() == null) {
+        if(dest == null || dest.isMulticast()) {
             visited_sites=new HashSet<>(sites); // to be added to the header
             visited_sites.add(this.site);
             if(hdr != null && hdr.hasVisitedSites()) {
