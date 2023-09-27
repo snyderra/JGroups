@@ -54,7 +54,7 @@ public class RelayTest extends RelayTests {
      */
     public void testAddRelay2ToAnAlreadyConnectedChannel(Class<? extends RELAY> cl) throws Exception {
         // Create and connect a channel.
-        a=new JChannel(defaultStack()).name("A").connect(SFO);
+        a=new JChannel(defaultStack(null)).name("A").connect(SFO);
         System.out.printf("Channel %s is connected. View: %s\n", a.getName(), a.getView());
 
         // Add RELAY protocol to the already connected channel.
@@ -408,11 +408,11 @@ public class RelayTest extends RelayTests {
 
     /** Tests sending to the 3 site masters A, C and E, and expecting responses */
     public void testSendingToSiteMasters(Class<? extends RELAY> cl) throws Exception {
-        createSymmetricNetwork(cl, ch -> new ResponseSender<Message>(ch).rawMsgs(true));
+        createSymmetricNetwork(cl, ch -> new UnicastResponseSender<Message>(ch).rawMsgs(true));
         for(JChannel ch: allChannels()) {
             for(String site: new String[]{LON,NYC,SFO}) {
                 Address target=new SiteMaster(site);
-                ch.send(target, String.format("%s", ch.getAddress()));
+                ch.send(target, new Data(REQ, String.format("%s", ch.getAddress())));
             }
         }
 
@@ -434,9 +434,34 @@ public class RelayTest extends RelayTests {
           .allMatch(l -> l.stream().allMatch(m -> m.dest() != null && m.src() != null));
 
         // check that we have 6 messages with dest=SiteMaster(S) where S is the current site (only in site masters)
-        assert allChannels().stream().filter(RelayTests::isSiteMaster)
-          .map(ch -> getReceiver(ch).list())
-          .allMatch(l -> l.stream().filter(m -> m.dest() instanceof SiteMaster).count() == 6);
+        // Note that the SiteMaster("X") to self message will result in a unicast (self) dest address, so 5 SM dests;
+        // this was changed in JGRP-2729 (only in RELAY3)
+        for(JChannel ch: allChannels()) {
+            List<Message> list=((MyReceiver<Message>)ch.getReceiver()).list();
+            RELAY relay=ch.getProtocolStack().findProtocol(RELAY.class);
+            int sm=0, loopbacks=0;
+            for(Message msg: list) {
+                if(msg.dest() instanceof SiteMaster)
+                    sm++;
+                else if(ch.getAddress().equals(msg.dest()))
+                    loopbacks++;
+            }
+            System.out.printf("--> %s: %d sms %d loopbacks\n", ch.getAddress(), sm, loopbacks);
+            if(!relay.isSiteMaster()) {
+                assert sm == 0;
+                assert loopbacks == 3;
+            }
+            else { // site master
+                if(relay.getClass().equals(RELAY2.class)) {
+                    assert loopbacks == 3;
+                    assert sm == 6;
+                }
+                else { // RELAY3
+                    assert loopbacks == 4;
+                    assert sm == 5;
+                }
+            }
+        }
     }
 
     /** Same as above but with SiteMaster(null) as target */

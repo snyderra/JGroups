@@ -40,20 +40,21 @@ public class RelayTests {
         LOOPBACK=InetAddress.getLoopbackAddress();
     }
 
-    protected static Protocol[] defaultStack(Protocol ... additional_protocols) {
+    protected static Protocol[] defaultStack(RELAY relay) {
+        RELAY2 r2=relay instanceof RELAY2? (RELAY2)relay : null;
+        RELAY3 r3=relay instanceof RELAY3? (RELAY3)relay : null;
+
         Protocol[] protocols={
           new TCP().setBindAddress(LOOPBACK),
           new LOCAL_PING(),
           new MERGE3().setMaxInterval(3000).setMinInterval(1000),
           new NAKACK2().useMcastXmit(false),
+          r3,
           new UNICAST3(),
-          new GMS().printLocalAddress(false)
+          new GMS().printLocalAddress(false),
+          r2
         };
-        if(additional_protocols == null)
-            return protocols;
-        Protocol[] tmp=Arrays.copyOf(protocols, protocols.length + additional_protocols.length);
-        System.arraycopy(additional_protocols, 0, tmp, protocols.length, additional_protocols.length);
-        return tmp;
+        return Util.combine(Protocol.class, protocols);
     }
 
     /**
@@ -94,7 +95,7 @@ public class RelayTests {
           .delaySitesDown(false); // for compatibility with testSitesUp()
         for(String site: sites) {
             SiteConfig cfg=new SiteConfig(site)
-              .addBridge(new RelayConfig.ProgrammaticBridgeConfig(bridge, defaultStack()));
+              .addBridge(new RelayConfig.ProgrammaticBridgeConfig(bridge, defaultStack(null)));
             relay.addSite(site, cfg);
         }
         return relay;
@@ -106,7 +107,7 @@ public class RelayTests {
         for(MySiteConfig cfg: site_cfgs) {
             SiteConfig site_cfg=new SiteConfig(cfg.site);
             for(String bridge_name: cfg.bridges)
-                site_cfg.addBridge(new RelayConfig.ProgrammaticBridgeConfig(bridge_name, defaultStack()));
+                site_cfg.addBridge(new RelayConfig.ProgrammaticBridgeConfig(bridge_name, defaultStack(null)));
             for(Tuple<String,String> t: cfg.forwards)
                 site_cfg.addForward(new RelayConfig.ForwardConfig(t.getVal1(), t.getVal2()));
             relay.addSite(cfg.site, site_cfg);
