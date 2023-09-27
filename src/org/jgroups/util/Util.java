@@ -605,6 +605,20 @@ public class Util {
         return retval;
     }
 
+ /*   *//** Returns a copy of array, without null elements *//*
+    @SafeVarargs public static <T> T[] splice(T ... array) {
+        int count=0;
+        for(T t: array)
+            if(t != null)
+                count++;
+        T[] retval=Array.newInstance(T, count);
+        int index=0;
+        for(T t: array) {
+            if(t != null)
+                retval[index++]=t;
+        }
+        return retval;
+    }*/
 
     /**
      * Creates an object from a byte buffer
@@ -2265,6 +2279,17 @@ public class Util {
         E[] retval=(E[])Array.newInstance(arrays[0].getClass().getComponentType(), size);
         AtomicInteger index=new AtomicInteger();
         Stream.of(arrays).flatMap(Stream::of).forEach(el -> retval[index.getAndIncrement()]=el);
+        return retval;
+    }
+
+    @SafeVarargs
+    public static <E> E[] combine(Class<?> cl, E ... array) {
+        if(array == null)
+            return null;
+        int size=(int)Stream.of(array).filter(Objects::nonNull).count();
+        E[] retval=(E[])Array.newInstance(cl, size);
+        AtomicInteger index=new AtomicInteger();
+        Stream.of(array).filter(Objects::nonNull).forEach(el -> retval[index.getAndIncrement()]=el);
         return retval;
     }
 
