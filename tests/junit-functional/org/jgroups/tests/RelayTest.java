@@ -23,6 +23,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static org.jgroups.tests.RelayTests.Data.Type.REQ;
+import static org.jgroups.tests.RelayTests.Data.Type.RSP;
 
 /**
  * Various RELAY-related tests ({@link RELAY2} and {@link RELAY3})
@@ -437,7 +438,7 @@ public class RelayTest extends RelayTests {
         // Note that the SiteMaster("X") to self message will result in a unicast (self) dest address, so 5 SM dests;
         // this was changed in JGRP-2729 (only in RELAY3)
         for(JChannel ch: allChannels()) {
-            List<Message> list=((MyReceiver<Message>)ch.getReceiver()).list();
+            List<Message> list=getReceiver(ch).list();
             RELAY relay=ch.getProtocolStack().findProtocol(RELAY.class);
             int sm=0, loopbacks=0;
             for(Message msg: list) {
@@ -496,6 +497,23 @@ public class RelayTest extends RelayTests {
         assert allChannels().stream().filter(RelayTests::isSiteMaster)
           .map(ch -> getReceiver(ch).list())
           .allMatch(l -> l.stream().filter(m -> m.dest() instanceof SiteMaster).count() == 6);
+    }
+
+    /** Tests A sending to SM("lon") (A, loopback) and B sending to SM("lon") (A) */
+    public void testSendingToLocalSiteMaster(Class<? extends RELAY> cl) throws Exception {
+        createSymmetricNetwork(cl, ch -> new UnicastResponseSender<Message>(ch).rawMsgs(true));
+        a.send(new SiteMaster(LON), new Data(REQ, "hello"));
+        List<Message> list_a=getReceiver(a).list();
+        List<Message> list_b=getReceiver(b).list();
+        Util.waitUntil(2000, 100, () -> list_a.size() == 2);
+        assert list_a.stream().map(Message::getObject).filter(obj -> ((Data)obj).type == REQ).count() == 1;
+        assert list_a.stream().map(Message::getObject).filter(obj -> ((Data)obj).type == RSP).count() == 1;
+
+        list_a.clear();
+        b.send(new SiteMaster(LON), new Data(REQ, "hello"));
+        Util.waitUntil(2000, 100, () -> list_a.size() == 1 && list_b.size() == 1);
+        assert list_a.stream().map(Message::getObject).filter(obj -> ((Data)obj).type == REQ).count() == 1;
+        assert list_b.stream().map(Message::getObject).filter(obj -> ((Data)obj).type == RSP).count() == 1;
     }
 
     /** Sends a message to all members of the local site only */
@@ -612,6 +630,35 @@ public class RelayTest extends RelayTests {
         target=relay2? makeSiteUUID(d.getAddress(), "nyc") : d.getAddress();
         a.send(target, new Data(REQ,"hello from A"));
         assertNumMessages(1, a,d);
+    }
+
+    /** Tests sending a large message across sites (from A:lon -> C:nyc); the fragmentation protocol should
+     * fragment/unfragment it */
+    public void testFragmentation(Class<? extends RELAY> cl) throws Exception {
+        createSymmetricNetwork(cl, ch -> new UnicastResponseSender<>(ch).rawMsgs(true));
+        String s="hello".repeat(1000);
+        a.send(b.getAddress(), new Data(REQ, s));
+        List<Message> list_a=getReceiver(a).list(), list_b=getReceiver(b).list();
+        Util.waitUntil(2000, 100, () -> list_a.size() == 1 && list_b.size() == 1);
+    }
+
+    /** Tests state transfer between sites: from C:nyc to A:lon */
+    public void testStateTransfer(Class<? extends RELAY> cl) throws Exception {
+        createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true));
+        MyReceiver<Message> r_a=(MyReceiver<Message>)a.getReceiver();
+        MyReceiver<Message> r_c=(MyReceiver<Message>)c.getReceiver();
+        boolean relay2=cl.equals(RELAY2.class);
+
+        // set state in C:
+        r_c.state().put("name", "Bela");
+        r_c.state().put("id", "322649");
+
+        // because an address is not a SiteUUID in RELAY2 (just a regular address), A would not know C
+        // we therefore wrap C's address into a SiteUUID (for RELAY2 only)
+        Address target=relay2? makeSiteUUID(c.getAddress(), "nyc") : c.getAddress();
+
+        a.getState(target, 2000);
+        assert r_a.state().size() == 2;
     }
 
     /** Tests https://issues.redhat.com/browse/JGRP-2696 */

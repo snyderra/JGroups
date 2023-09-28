@@ -3,12 +3,11 @@
  import org.jgroups.*;
  import org.jgroups.logging.Log;
  import org.jgroups.logging.LogFactory;
- import org.jgroups.protocols.LOCAL_PING;
- import org.jgroups.protocols.MERGE3;
- import org.jgroups.protocols.TCP;
- import org.jgroups.protocols.UNICAST3;
+ import org.jgroups.protocols.*;
  import org.jgroups.protocols.pbcast.GMS;
  import org.jgroups.protocols.pbcast.NAKACK2;
+ import org.jgroups.protocols.pbcast.STABLE;
+ import org.jgroups.protocols.pbcast.STATE_TRANSFER;
  import org.jgroups.protocols.relay.*;
  import org.jgroups.protocols.relay.config.RelayConfig;
  import org.jgroups.protocols.relay.config.RelayConfig.SiteConfig;
@@ -51,8 +50,13 @@ public class RelayTests {
           new NAKACK2().useMcastXmit(false),
           r3,
           new UNICAST3(),
-          new GMS().printLocalAddress(false),
-          r2
+          new STABLE().setDesiredAverageGossip(50000).setMaxBytes(8_000_000),
+          new GMS().printLocalAddress(false).setJoinTimeout(500),
+          new UFC().setMaxCredits(2_000_000).setMinThreshold(0.4),
+          new MFC().setMaxCredits(2_000_000).setMinThreshold(0.4),
+          new FRAG2().setFragSize(1024),
+          r2,
+          new STATE_TRANSFER()
         };
         return Util.combine(Protocol.class, protocols);
     }

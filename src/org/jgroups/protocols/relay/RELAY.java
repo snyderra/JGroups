@@ -360,6 +360,10 @@ public abstract class RELAY extends Protocol {
         return String.format("%s%s", getClass().getSimpleName(), local_addr != null? String.format(" (%s)", local_addr) : "");
     }
 
+    protected boolean isLocal(SiteAddress addr) {
+        return Objects.equals(site, addr.getSite());
+    }
+
     protected boolean isLocal(SiteMaster sm) {
         return is_site_master && Objects.equals(site, sm.getSite());
     }
