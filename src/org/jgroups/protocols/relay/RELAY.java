@@ -356,10 +356,6 @@ public abstract class RELAY extends Protocol {
 
     protected abstract void handleRelayMessage(Message msg);
 
-    public String toString() {
-        return String.format("%s%s", getClass().getSimpleName(), local_addr != null? String.format(" (%s)", local_addr) : "");
-    }
-
     protected boolean isLocal(SiteAddress addr) {
         return Objects.equals(site, addr.getSite());
     }

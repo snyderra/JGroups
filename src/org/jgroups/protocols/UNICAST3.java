@@ -713,10 +713,6 @@ public class UNICAST3 extends Protocol implements AgeOutCache.Handler<Address> {
         return false;
     }
 
-    public String toString() {
-        return String.format("%s%s", getClass().getSimpleName(), local_addr != null? String.format(" (%s)", local_addr) : "");
-    }
-
     /**
      * Removes and resets from connection table (which is already locked). Returns true if member was found,
      * otherwise false. This method is public only so it can be invoked by unit testing, but should not be used !

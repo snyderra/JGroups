@@ -271,10 +271,6 @@ public abstract class FlowControl extends Protocol {
         }
     }
 
-    public String toString() {
-        return String.format("%s%s", getClass().getSimpleName(), local_addr != null? String.format(" (%s)", local_addr) : "");
-    }
-
     protected void handleUpEvent(final Message msg, FcHeader hdr) {
         switch(hdr.type) {
             case FcHeader.REPLENISH:
