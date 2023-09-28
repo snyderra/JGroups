@@ -24,7 +24,7 @@ import java.util.stream.Stream;
  * @author Bela Ban
  * @since  5.2.18
  */
-@Test(groups= Global.FUNCTIONAL,singleThreaded=true)
+@Test(groups={Global.FUNCTIONAL,Global.RELAY},singleThreaded=true)
 public class RelayTestAsym extends RelayTests {
     protected JChannel a,b,c; // hf
     protected JChannel d,e,f; // net1

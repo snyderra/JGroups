@@ -30,7 +30,7 @@ import static org.jgroups.tests.RelayTests.Data.Type.RSP;
  * @author Bela Ban
  * @since 3.2
  */
-@Test(groups=Global.FUNCTIONAL,singleThreaded=true,dataProvider="relayProvider")
+@Test(groups={Global.FUNCTIONAL,Global.RELAY},singleThreaded=true,dataProvider="relayProvider")
 public class RelayTest extends RelayTests {
     protected JChannel a, b, c;  // members in site "lon"
     protected JChannel d, e, f;  // used for other tests AB CD EF
