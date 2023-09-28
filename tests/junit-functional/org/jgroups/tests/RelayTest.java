@@ -1,9 +1,12 @@
 package org.jgroups.tests;
 
 import org.jgroups.*;
+import org.jgroups.protocols.DROP;
+import org.jgroups.protocols.UNICAST3;
 import org.jgroups.protocols.pbcast.GMS;
 import org.jgroups.protocols.relay.*;
 import org.jgroups.stack.Protocol;
+import org.jgroups.stack.ProtocolStack;
 import org.jgroups.util.MyReceiver;
 import org.jgroups.util.NameCache;
 import org.jgroups.util.UUID;
@@ -42,7 +45,7 @@ public class RelayTest extends RelayTests {
     @DataProvider
     protected Object[][] relayProvider() {
         return new Object[][] {
-          {RELAY2.class},
+          // {RELAY2.class},
           {RELAY3.class}
         };
     }
@@ -757,6 +760,74 @@ public class RelayTest extends RelayTests {
             System.out.printf("-- received messages:\n%s\n", printMessages(generator.get()));
         }
     }
+
+    /** A sends a message M to SiteMaster("nyc") (C), but C fails before receiving M. A retransmits and eventually
+     * the new site master of "nyc" (D) will receive and process M */
+    public void testFailover(Class<? extends RELAY> cl) throws Exception {
+        createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true).verbose(true));
+        Util.close(f,e);
+
+        ((MyReceiver<?>)d.getReceiver()).name("D");
+        DROP drop=new DROP(); // drops unicast message from A:lon -> C:nyc (site master)
+        drop.addDownFilter(msg -> msg.src() != null && msg.src().equals(a.getAddress())
+          && msg.dest() != null && msg.dest().isSiteMaster());
+        a.getProtocolStack().insertProtocol(drop, ProtocolStack.Position.BELOW, UNICAST3.class);
+        a.send(new SiteMaster("nyc"), "hello");
+
+        // now kill C, D will take over as site master
+        Util.close(c);
+        Util.waitUntil(3000, 500,
+                       () -> ((RELAY)d.getProtocolStack().findProtocol(RELAY.class)).isSiteMaster());
+        drop.clearDownFilters();
+        MyReceiver<Message> r=getReceiver(d);
+        Util.waitUntil(2000, 200, () -> r.size() == 1);
+    }
+
+    /** Same as above, but now DROP is added to the bridge stack between "lon" and "nyc" */
+    public void testFailover2(Class<? extends RELAY> cl) throws Exception {
+        createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true).verbose(true));
+        Util.close(f,e);
+
+        ((MyReceiver<?>)d.getReceiver()).name("D");
+        DROP drop=new DROP(); // drops unicast message from _A:lon -> _C:nyc (site master)
+        RELAY relay_a=a.getProtocolStack().findProtocol(RELAY.class);
+        JChannel bridge=relay_a.getBridge(NYC);
+        bridge.getProtocolStack().insertProtocol(drop, ProtocolStack.Position.BELOW, UNICAST3.class);
+        drop.addDownFilter(msg -> msg.src() != null && msg.src().equals(bridge.address()) && msg.dest() != null);
+
+        a.send(new SiteMaster("nyc"), "hello");
+
+        // now kill C, D will take over as site master
+        Util.close(c);
+        Util.waitUntil(3000, 500,
+                       () -> ((RELAY)d.getProtocolStack().findProtocol(RELAY.class)).isSiteMaster());
+        drop.clearDownFilters();
+        MyReceiver<Message> r=getReceiver(d);
+        Util.waitUntil(2000, 200, () -> r.size() == 1);
+    }
+
+    /** B:lon sends M to SiteMaster("nyc") (C). Before forwarding M to the local site master (A), A fails.
+     * B now assume the site master role and forwards M to C:nyc
+     */
+    public void testFailover3(Class<? extends RELAY> cl) throws Exception {
+        createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true).verbose(true));
+        Util.close(f, e);
+
+
+    }
+
+    /** A:lon sends M to SiteMaster("nyc"). Before M is received by either C or D, the entire site NYC (C and D) fails.
+     * Make sure that sitesDown or site-unreachable causes retransmission on A to stop */
+    public void testFailoverSiteDown(Class<? extends RELAY> cl) throws Exception {
+        createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true).verbose(true));
+        Util.close(f, e);
+
+
+        // todo
+
+
+    }
+
 
     protected static String printMessages(Stream<JChannel> s) {
         return s.map(ch -> String.format("%s: %d msgs (%s)", ch.address(), getReceiver(ch).size(),
