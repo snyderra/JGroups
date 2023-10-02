@@ -648,8 +648,8 @@ public class RelayTest extends RelayTests {
     /** Tests state transfer between sites: from C:nyc to A:lon */
     public void testStateTransfer(Class<? extends RELAY> cl) throws Exception {
         createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true));
-        MyReceiver<Message> r_a=(MyReceiver<Message>)a.getReceiver();
-        MyReceiver<Message> r_c=(MyReceiver<Message>)c.getReceiver();
+        MyReceiver<Message> r_a=getReceiver(a);
+        MyReceiver<Message> r_c=getReceiver(c);
         boolean relay2=cl.equals(RELAY2.class);
 
         // set state in C:
@@ -764,10 +764,9 @@ public class RelayTest extends RelayTests {
     /** A sends a message M to SiteMaster("nyc") (C), but C fails before receiving M. A retransmits and eventually
      * the new site master of "nyc" (D) will receive and process M */
     public void testFailover(Class<? extends RELAY> cl) throws Exception {
-        createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true).verbose(true));
+        createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true).verbose(true).name(ch.name()));
         Util.close(f,e);
 
-        ((MyReceiver<?>)d.getReceiver()).name("D");
         DROP drop=new DROP(); // drops unicast message from A:lon -> C:nyc (site master)
         drop.addDownFilter(msg -> msg.src() != null && msg.src().equals(a.getAddress())
           && msg.dest() != null && msg.dest().isSiteMaster());
@@ -785,10 +784,9 @@ public class RelayTest extends RelayTests {
 
     /** Same as above, but now DROP is added to the bridge stack between "lon" and "nyc" */
     public void testFailover2(Class<? extends RELAY> cl) throws Exception {
-        createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true).verbose(true));
+        createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true).verbose(true).name(ch.getName()));
         Util.close(f,e);
 
-        ((MyReceiver<?>)d.getReceiver()).name("D");
         DROP drop=new DROP(); // drops unicast message from _A:lon -> _C:nyc (site master)
         RELAY relay_a=a.getProtocolStack().findProtocol(RELAY.class);
         JChannel bridge=relay_a.getBridge(NYC);
@@ -807,12 +805,22 @@ public class RelayTest extends RelayTests {
     }
 
     /** B:lon sends M to SiteMaster("nyc") (C). Before forwarding M to the local site master (A), A fails.
-     * B now assume the site master role and forwards M to C:nyc
+     * B now becomes site master and forwards M to C:nyc
      */
     public void testFailover3(Class<? extends RELAY> cl) throws Exception {
-        createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true).verbose(true));
+        createSymmetricNetwork(cl, ch -> new MyReceiver<>().rawMsgs(true).verbose(true).name(ch.name()));
         Util.close(f, e);
 
+        MyReceiver<Message> r=getReceiver(c);
+        DROP drop=new DROP().addDownFilter(m -> m.dest() != null && m.dest().equals(a.address()));
+        b.getProtocolStack().insertProtocol(drop, ProtocolStack.Position.BELOW, RELAY.class);
+        b.send(new SiteMaster("nyc"), "hello");
+
+        Util.close(a);
+        Util.waitUntil(3000, 500,
+                       () -> ((RELAY)b.getProtocolStack().findProtocol(RELAY.class)).isSiteMaster());
+        drop.clearDownFilters();
+        Util.waitUntil(2000, 200, () -> r.size() == 1);
 
     }
 

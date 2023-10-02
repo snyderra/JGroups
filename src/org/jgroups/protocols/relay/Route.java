@@ -46,7 +46,7 @@ public class Route implements Comparable<Route> {
 
     public void send(Address final_destination, Address original_sender, final Message msg, Collection<String> visited_sites) {
         if(log.isTraceEnabled())
-            log.trace("routing message to " + final_destination + " via " + site_master);
+            log.trace("%s: routing message to %s via %s", bridge.address(), final_destination, site_master);
         long start=stats? System.nanoTime() : 0;
         try {
             Message copy=createMessage(site_master, final_destination, original_sender, msg, visited_sites);
