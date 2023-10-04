@@ -700,7 +700,11 @@ public class ProtocolStack extends Protocol {
     }
 
     public <T extends Protocol> T findProtocol(Class<? extends Protocol> clazz) {
-        Protocol tmp=top_prot;
+        return findProtocol(top_prot, clazz);
+    }
+
+    public static <T extends Protocol> T findProtocol(Protocol start, Class<? extends Protocol> clazz) {
+        Protocol tmp=start;
         while(tmp != null) {
             Class<?> protClass=tmp.getClass();
             if(clazz.isAssignableFrom(protClass))
