@@ -340,6 +340,8 @@ public abstract class RELAY extends Protocol {
             case Event.VIEW_CHANGE:
                 handleView(evt.arg());
                 break;
+            case Event.IS_LOCAL_SITEMASTER:
+                return isLocalSitemaster(evt.arg());
             case Event.IS_LOCAL:
                 return isLocal(evt.arg());
         }
@@ -360,8 +362,8 @@ public abstract class RELAY extends Protocol {
         return Objects.equals(site, addr.getSite());
     }
 
-    protected boolean isLocal(SiteMaster sm) {
-        return is_site_master && Objects.equals(site, sm.getSite());
+    protected boolean isLocalSitemaster(SiteAddress addr) {
+        return is_site_master && isLocal(addr);
     }
 
     /** Parses the configuration by reading the config file */

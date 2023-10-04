@@ -342,7 +342,8 @@ public class RELAY3 extends RELAY {
                 case SM:
                     if(down)
                         return sendToLocalSiteMaster(local_addr, msg); // todo: local_addr or msg.src()?
-                    throw new IllegalStateException(String.format("non site master received a msg with dst %s",dst));
+                    throw new IllegalStateException(String.format("non site master %s received a msg with dst %s",
+                                                                  local_addr,dst));
                 case UNICAST:
                     if(down) {
                         if(sameSite(dst)) // todo: if same address -> passUp()
@@ -432,8 +433,6 @@ public class RELAY3 extends RELAY {
     protected Object deliver(Address next_dest, Message msg, boolean dont_relay, boolean dont_loopback) {
         checkLocalAddress(next_dest);
         Address final_dest=msg.dest(), original_sender=msg.src();
-        if(log.isTraceEnabled())
-            log.trace("%s: forwarding message to final destination %s to %s", local_addr, final_dest, next_dest);
         RelayHeader tmp=msg.getHeader(this.id);
         // todo: check if copy is needed here
         RelayHeader hdr=tmp != null? tmp.copy().setOriginalSender(original_sender).setFinalDestination(final_dest)
