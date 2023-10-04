@@ -42,6 +42,8 @@ public class RelayTests {
     protected static Protocol[] defaultStack(RELAY relay) {
         RELAY2 r2=relay instanceof RELAY2? (RELAY2)relay : null;
         RELAY3 r3=relay instanceof RELAY3? (RELAY3)relay : null;
+        if(r3 != null)
+            r3.asyncRelayCreation(false);
 
         Protocol[] protocols={
           new TCP().setBindAddress(LOOPBACK),
@@ -169,6 +171,12 @@ public class RelayTests {
             assert bridge_view != null && bridge_view.size() == expected_size
               : ch.getAddress() + ": bridge view=" + bridge_view + ", expected=" + expected_size;
         }
+    }
+
+    protected static void waitForSiteMasters(boolean expected, JChannel ... channels) throws TimeoutException {
+        Util.waitUntil(5000, 500,
+                       () -> Stream.of(channels).map(ch -> ((RELAY)ch.getProtocolStack().findProtocol(RELAY.class)))
+                         .allMatch(r -> r.isSiteMaster() == expected));
     }
 
     protected static MyReceiver<Message> getReceiver(JChannel ch) {

@@ -1,8 +1,13 @@
 package org.jgroups.tests;
 
 import org.jgroups.*;
+import org.jgroups.protocols.UNICAST3;
+import org.jgroups.protocols.relay.RELAY;
 import org.jgroups.protocols.relay.RELAY3;
+import org.jgroups.protocols.relay.RouteStatusListener;
+import org.jgroups.protocols.relay.SiteMaster;
 import org.jgroups.util.MyReceiver;
+import org.jgroups.util.Table;
 import org.jgroups.util.Util;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
@@ -11,6 +16,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -84,6 +90,61 @@ public class RelayTestAsym extends RelayTests {
         Stream.of(a,b,c,x,y,z).forEach(ch -> send(ch, null, String.format("from %s", ch.address())));
         // we only receive 3 messages (from own site)
         assertNumMessages(3, a,b,c,x,y,z);
+    }
+
+    /** Tests sending message M from A:hf to Y:net3 while net2 is down. The site-unreachable notification should
+     * stop retransmission of M on A:lon */
+    public void testFailoverSiteDown() throws Exception {
+        _testFailoverSiteDown(() -> y.address());
+    }
+
+    /** Tests sending message M from A:hf to SiteMaster("net3") while net2 is down. The site-unreachable notification
+     * should stop retransmission of M on A:lon */
+    public void testFailoverSiteDown2() throws Exception {
+        _testFailoverSiteDown(() -> new SiteMaster("net3"));
+    }
+
+    @Test(enabled=false)
+    protected void _testFailoverSiteDown(Supplier<Address> s) throws Exception {
+        setup(true);
+        waitForSiteMasters(true, a, d, m, x);
+        RELAY relay=a.getProtocolStack().findProtocol(RELAY.class);
+        Address target=s.get();
+        y.setReceiver(new MyReceiver<Message>().verbose(true).name(y.name()));
+        Util.closeReverse(m, n, o); // causes entire net2 site to be down
+
+        relay.setRouteStatusListener(new RouteStatusListener() {
+            @Override
+            public void sitesUp(String... sites) {
+                System.out.printf("** site-up(%s)\n", Arrays.toString(sites));
+            }
+
+            @Override
+            public void sitesDown(String... sites) {
+                System.out.printf("** site-down(%s)\n", Arrays.toString(sites));
+            }
+
+            @Override
+            public void sitesUnreachable(String... sites) {
+                System.out.printf("** sites-unreachable(%s)\n", Arrays.toString(sites));
+            }
+        });
+
+        a.send(target, "hello"); // won't succeed
+
+        MyReceiver<Message> r=getReceiver(y);
+        Util.waitUntil(2000, 200, () -> r.size() == 1);
+
+        Util.closeReverse(m, n, o);
+        UNICAST3 unicast=a.getProtocolStack().findProtocol(UNICAST3.class);
+        Table<Message> send_win=unicast.getSendWindow(target);
+        // check if there is still retransmission going on in A
+        Util.waitUntil(5000, 1000, () -> {
+            long highest_acked=send_win.getHighestDelivered(); // highest delivered == highest ack (sender win)
+            long highest_sent=send_win.getHighestReceived();   // we use table as a *sender* win, so it's highest *sent*...
+            System.out.printf("** highest_sent: %d highest_acked: %d\n", highest_sent, highest_acked);
+            return highest_acked >= highest_sent;
+        });
     }
 
     protected static void send(JChannel ch, Address dest, Object payload) {
