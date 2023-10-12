@@ -56,7 +56,7 @@ public class Event {
     public static final int LOCK_SIGNAL                        = 99; // arg = AwaitInfo
     public static final int IS_MERGE_IN_PROGRESS               = 100; // returns true or false
     public static final int GET_PHYSICAL_ADDRESSES             = 102; // arg = null (returns all physical addresses)
-    public static final int SITE_UNREACHABLE                   = 104; // arg = SiteMaster (RELAY2)
+    public static final int SITE_UNREACHABLE                   = 104; // arg = SiteMaster (RELAY2/RELAY3)
     public static final int PUNCH_HOLE                         = 106; // arg = Address (member)
     public static final int CLOSE_HOLE                         = 107; // arg = Address (member)
     public static final int GET_VIEW_FROM_COORD                = 108;
