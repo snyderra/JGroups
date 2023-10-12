@@ -2,9 +2,9 @@ package org.jgroups.tests;
 
 import org.jgroups.*;
 import org.jgroups.protocols.UNICAST3;
+import org.jgroups.protocols.relay.DefaultRouteStatusListener;
 import org.jgroups.protocols.relay.RELAY;
 import org.jgroups.protocols.relay.RELAY3;
-import org.jgroups.protocols.relay.RouteStatusListener;
 import org.jgroups.protocols.relay.SiteMaster;
 import org.jgroups.util.MyReceiver;
 import org.jgroups.util.Table;
@@ -113,36 +113,43 @@ public class RelayTestAsym extends RelayTests {
         y.setReceiver(new MyReceiver<Message>().verbose(true).name(y.name()));
         Util.closeReverse(m, n, o); // causes entire net2 site to be down
 
-        relay.setRouteStatusListener(new RouteStatusListener() {
-            @Override
-            public void sitesUp(String... sites) {
-                System.out.printf("** site-up(%s)\n", Arrays.toString(sites));
-            }
-
-            @Override
-            public void sitesDown(String... sites) {
-                System.out.printf("** site-down(%s)\n", Arrays.toString(sites));
-            }
-
-            @Override
-            public void sitesUnreachable(String... sites) {
-                System.out.printf("** sites-unreachable(%s)\n", Arrays.toString(sites));
-            }
-        });
+        relay.setRouteStatusListener(new DefaultRouteStatusListener(() -> a.address()).verbose(true));
 
         a.send(target, "hello"); // won't succeed
-
         MyReceiver<Message> r=getReceiver(y);
-        Util.waitUntil(2000, 200, () -> r.size() == 1);
+        Util.waitUntilTrue(2000, 200, () -> r.size() == 1);
 
-        Util.closeReverse(m, n, o);
         UNICAST3 unicast=a.getProtocolStack().findProtocol(UNICAST3.class);
         Table<Message> send_win=unicast.getSendWindow(target);
         // check if there is still retransmission going on in A
         Util.waitUntil(5000, 1000, () -> {
             long highest_acked=send_win.getHighestDelivered(); // highest delivered == highest ack (sender win)
             long highest_sent=send_win.getHighestReceived();   // we use table as a *sender* win, so it's highest *sent*...
-            System.out.printf("** highest_sent: %d highest_acked: %d\n", highest_sent, highest_acked);
+            System.out.printf("** A -> %s: highest_sent: %d highest_acked: %d\n", target, highest_sent, highest_acked);
+            return highest_acked >= highest_sent;
+        });
+    }
+
+    /** A:lon sends a unicast message M to Y:net3, which left the cluster before. X:net3 (the site master) should
+     * send back a HOST-UNREACHABLE message to A:lon */
+    public void testHostUnreachable() throws Exception {
+        setup(true);
+        waitForSiteMasters(true, a, d, m, x);
+        RELAY relay=a.getProtocolStack().findProtocol(RELAY.class);
+        Address target=y.address();
+        relay.setRouteStatusListener(new DefaultRouteStatusListener(relay::addr).verbose(true));
+        Util.close(y);
+        Util.waitUntil(5000, 200, () -> Stream.of(x,z).allMatch(ch -> ch.getView().size() == 2));
+        System.out.printf("-- sending message to (crashed) %s:\n", target);
+        a.send(target, "hello");
+
+        UNICAST3 unicast=a.getProtocolStack().findProtocol(UNICAST3.class);
+        Table<Message> send_win=unicast.getSendWindow(target);
+        // check if there is still retransmission going on in A
+        Util.waitUntil(5000, 1000, () -> {
+            long highest_acked=send_win.getHighestDelivered(); // highest delivered == highest ack (sender win)
+            long highest_sent=send_win.getHighestReceived();   // we use table as a *sender* win, so it's highest *sent*...
+            System.out.printf("** A -> %s: highest_sent: %d highest_acked: %d\n", target, highest_sent, highest_acked);
             return highest_acked >= highest_sent;
         });
     }

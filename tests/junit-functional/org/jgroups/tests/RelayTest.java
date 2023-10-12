@@ -43,7 +43,7 @@ public class RelayTest extends RelayTests {
     @DataProvider
     protected Object[][] relayProvider() {
         return new Object[][] {
-          // {RELAY2.class},
+          {RELAY2.class},
           {RELAY3.class}
         };
     }
@@ -355,14 +355,14 @@ public class RelayTest extends RelayTests {
 
             Stream.of(d,e,f,_g,_h,_i)
               .map(ch -> (RELAY)ch.getProtocolStack().findProtocol(RELAY.class))
-              .forEach(r -> r.setRouteStatusListener(new MyRouteStatusListener(r.getAddress()).verbose(false)));
+              .forEach(r -> r.setRouteStatusListener(new DefaultRouteStatusListener(() -> r.getAddress()).verbose(false)));
 
             // now stop A; B will become new site master and we should get a site-down(NYC), then site-up(NYC)
             Util.close(a);
             Util.waitUntil(5000, 500, () -> Stream.of(d,e,f,_g,_h,_i)
               .map(ch -> (RELAY)ch.getProtocolStack().findProtocol(RELAY.class))
               .peek(r -> System.out.printf("%s: %s\n", r.getAddress(), r.getRouteStatusListener()))
-              .map(r -> (MyRouteStatusListener)r.getRouteStatusListener())
+              .map(r -> (DefaultRouteStatusListener)r.getRouteStatusListener())
               .allMatch(l -> l.down().contains(LON) && l.up().contains(LON)));
         }
     }
@@ -768,7 +768,12 @@ public class RelayTest extends RelayTests {
           && m.dest() != null && m.dest().isSiteMaster());
         c.getProtocolStack().insertProtocol(drop, ProtocolStack.Position.BELOW, UNICAST3.class);
 
-        a.send(new SiteMaster("nyc"), "hello");
+        UNICAST3 unicast=a.getProtocolStack().findProtocol(UNICAST3.class);
+        RELAY relay=a.getProtocolStack().findProtocol(RELAY.class);
+        relay.delaySitesDown(true);
+        relay.setRouteStatusListener(new DefaultRouteStatusListener(() -> a.address()).verbose(true));
+        Address target=new SiteMaster(NYC);
+        a.send(target, "hello");
 
         // now kill C; D will take over as site master
         System.out.println("-- closing site master of nyc (C):");
@@ -777,6 +782,11 @@ public class RelayTest extends RelayTests {
                        () -> ((RELAY)d.getProtocolStack().findProtocol(RELAY.class)).isSiteMaster());
         MyReceiver<Message> r=getReceiver(d);
         Util.waitUntil(2000, 200, () -> r.size() == 1);
+
+        Table<Message> send_win=unicast.getSendWindow(target);
+        // wait until the ack from D has been received
+        Util.waitUntil(2000, 100, () -> send_win.getHighestDelivered() == send_win.getHighestReceived());
+        relay.setRouteStatusListener(null);
     }
 
     /** Same as above, but now DROP is added to the bridge stack between "lon" and "nyc" */
@@ -847,23 +857,7 @@ public class RelayTest extends RelayTests {
 
         DROP drop=new DROP(); // drops unicast message from _A:lon -> _C:nyc (site master)
         RELAY relay=a.getProtocolStack().findProtocol(RELAY.class);
-
-        relay.setRouteStatusListener(new RouteStatusListener() {
-            @Override
-            public void sitesUp(String... sites) {
-                System.out.printf("** site-up(%s)\n", Arrays.toString(sites));
-            }
-
-            @Override
-            public void sitesDown(String... sites) {
-                System.out.printf("** site-down(%s)\n", Arrays.toString(sites));
-            }
-
-            @Override
-            public void sitesUnreachable(String... sites) {
-                System.out.printf("** sites-unreachable(%s)\n", Arrays.toString(sites));
-            }
-        });
+        relay.setRouteStatusListener(new DefaultRouteStatusListener(() -> relay.addr()).verbose(true));
 
         JChannel bridge=relay.getBridge(NYC);
         bridge.getProtocolStack().insertProtocol(drop, ProtocolStack.Position.BELOW, UNICAST3.class);
@@ -879,6 +873,7 @@ public class RelayTest extends RelayTests {
         drop.clearDownFilters();
         UNICAST3 unicast=a.getProtocolStack().findProtocol(UNICAST3.class);
         Table<Message> send_win=unicast.getSendWindow(target);
+        relay.setRouteStatusListener(null);
         // check if there is still retransmission going on in A
         Util.waitUntil(5000, 1000, () -> {
             long highest_acked=send_win.getHighestDelivered(); // highest delivered == highest ack (sender win)

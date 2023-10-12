@@ -233,40 +233,6 @@ public class RelayTests {
           .collect(Collectors.joining("\n"));
     }
 
-    protected static class MyRouteStatusListener implements RouteStatusListener {
-        protected final Address      local_addr;
-        protected final List<String> up=new ArrayList<>(), down=new ArrayList<>();
-        protected boolean            verbose;
-
-        protected MyRouteStatusListener(Address local_addr) {
-            this.local_addr=local_addr;
-        }
-
-        protected List<String>          up()               {return up;}
-        protected List<String>          down()             {return down;}
-        protected MyRouteStatusListener verbose(boolean b) {this.verbose=b; return this;}
-        protected boolean               verbose()          {return verbose;}
-
-        @Override public synchronized void sitesUp(String... sites) {
-            if(verbose)
-                System.out.printf("%s: UP(%s)\n", local_addr, Arrays.toString(sites));
-            up.addAll(Arrays.asList(sites));
-        }
-
-        @Override public synchronized void sitesDown(String... sites) {
-            if(verbose)
-                System.out.printf("%s: DOWN(%s)\n", local_addr, Arrays.toString(sites));
-            down.addAll(Arrays.asList(sites));
-        }
-
-        protected synchronized MyRouteStatusListener clear() {up.clear(); down.clear(); return this;}
-
-        @Override
-        public String toString() {
-            return String.format("down: %s, up: %s", down, up);
-        }
-    }
-
     protected static class ResponseSender<T> extends MyReceiver<T> {
         protected final JChannel ch;
 

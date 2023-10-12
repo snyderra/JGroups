@@ -371,7 +371,8 @@ public class RELAY2 extends RELAY {
         Route route=tmp.getRoute(target_site, sender);
         if(route == null) {
             if(suppress_log_no_route != null)
-                suppress_log_no_route.log(SuppressLog.Level.error, target_site, suppress_time_no_route_errors, sender, target_site);
+                suppress_log_no_route.log(SuppressLog.Level.error, target_site, suppress_time_no_route_errors,
+                                          local_addr, sender, dest);
             else
                 log.error(Util.getMessage("RelayNoRouteToSite"), local_addr, target_site);
             sendSiteUnreachableTo(msg.getSrc(), target_site);

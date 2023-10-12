@@ -21,6 +21,7 @@ import java.util.function.Supplier;
 public class RelayHeader extends Header {
     public static final byte DATA             = 1;
     public static final byte SITE_UNREACHABLE = 2; // final_dest is a SiteMaster
+    public static final byte MBR_UNREACHABLE  = 3; // sent back when a given member is not part of the local cluster
     public static final byte SITES_UP         = 4;
     public static final byte SITES_DOWN       = 5;
     public static final byte TOPO_REQ         = 6;
@@ -184,6 +185,7 @@ public class RelayHeader extends Header {
         switch(type) {
             case DATA:             return "DATA";
             case SITE_UNREACHABLE: return "SITE_UNREACHABLE";
+            case MBR_UNREACHABLE:  return "MBR_UNREACHABLE";
             case SITES_UP:         return "SITES_UP";
             case SITES_DOWN:       return "SITES_DOWN";
             case TOPO_REQ:         return "TOPO_REQ";

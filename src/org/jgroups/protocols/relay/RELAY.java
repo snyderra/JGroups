@@ -434,4 +434,9 @@ public abstract class RELAY extends Protocol {
             route_status_listener.sitesUnreachable(remoteSite.getSite());
     }
 
+    protected void triggerMemberUnreachableEvent(Address mbr) {
+        if(route_status_listener != null)
+            route_status_listener.memberUnreachable(mbr);
+    }
+
 }
