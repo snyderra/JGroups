@@ -3,9 +3,6 @@ package org.jgroups.util;
 import org.jgroups.annotations.GuardedBy;
 
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
@@ -18,9 +15,11 @@ import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
 
 /**
+ * Copy of {@link Table}. Implementation of {@link Buffer )}, expanding and shrinking dynamically.
+ * <br/>
  * A store for elements (typically messages) to be retransmitted or delivered. Used on sender and receiver side.
  * <br/>
- * Table maintains a matrix (an array of arrays) of elements, which are stored by mapping their seqno to an index.
+ * DynamicBuffer maintains a matrix of elements, which are stored by mapping their seqno to an index.
  * E.g. when we have 10 rows of 1000 elements each, and first_seqno is 3000, then an element with seqno=5600, will
  * be stored in the 3rd row, at index 600.
  * <br/>
@@ -29,7 +28,7 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
  * @author Bela Ban
  * @version 3.1
  */
-public class Table<T> implements Iterable<T> {
+public class DynamicBuffer<T> extends Buffer<T> {
     protected final int            num_rows;
     /** Must be a power of 2 for efficient modular arithmetic **/
     protected final int            elements_per_row;
@@ -57,46 +56,27 @@ public class Table<T> implements Iterable<T> {
      * last compaction is more than max_compaction_time nanoseconds ago, a compaction will take place */
     protected long                 last_compaction_timestamp;
 
-    protected final Lock           lock=new ReentrantLock();
-
-    protected final AtomicInteger  adders=new AtomicInteger(0);
-
     protected int                  num_compactions, num_resizes, num_moves, num_purges;
-    
+
     protected static final long    DEFAULT_MAX_COMPACTION_TIME=10000; // in milliseconds
 
     protected static final double  DEFAULT_RESIZE_FACTOR=1.2;
 
 
-
-    public interface Visitor<T> {
-        /**
-         * Iteration over the table, used by {@link Table#forEach(long,long,org.jgroups.util.Table.Visitor)}.
-         * @param seqno The current seqno
-         * @param element The element at matrix[row][column]
-         * @param row The current row
-         * @param column The current column
-         * @return True if we should continue the iteration, false if we should break out of the iteration
-         */
-        boolean visit(long seqno, T element, int row, int column);
-    }
-
-
-
-    public Table() {
+    public DynamicBuffer() {
         this(5, 8192, 0, DEFAULT_RESIZE_FACTOR);
     }
 
-    public Table(long offset) {
+    public DynamicBuffer(long offset) {
         this();
         this.offset=this.low=this.hr=this.hd=offset;
     }
 
-    public Table(int num_rows, int elements_per_row, long offset) {
+    public DynamicBuffer(int num_rows, int elements_per_row, long offset) {
         this(num_rows,elements_per_row, offset, DEFAULT_RESIZE_FACTOR);
     }
 
-    public Table(int num_rows, int elements_per_row, long offset, double resize_factor) {
+    public DynamicBuffer(int num_rows, int elements_per_row, long offset, double resize_factor) {
         this(num_rows,elements_per_row, offset, resize_factor, DEFAULT_MAX_COMPACTION_TIME);
     }
 
@@ -108,7 +88,7 @@ public class Table<T> implements Iterable<T> {
      * @param resize_factor teh factor with which to increase the number of rows
      * @param max_compaction_time the max time in milliseconds after we attempt a compaction
      */
-    public Table(int num_rows, int elements_per_row, long offset, double resize_factor, long max_compaction_time) {
+    public DynamicBuffer(int num_rows, int elements_per_row, long offset, double resize_factor, long max_compaction_time) {
         this.num_rows=num_rows;
         this.elements_per_row=Util.getNextHigherPowerOfTwo(elements_per_row);
         this.resize_factor=resize_factor;
@@ -119,12 +99,14 @@ public class Table<T> implements Iterable<T> {
             throw new IllegalArgumentException("resize_factor needs to be > 1");
     }
 
-    public AtomicInteger getAdders()     {return adders;}
 
-    public long getOffset()              {return offset;}
+
+    @Override
+    public long offset()                 {return offset;}
     public int  getElementsPerRow()      {return elements_per_row;}
 
     /** Returns the total capacity in the matrix */
+    @Override
     public int capacity()                {return matrix.length * elements_per_row;}
 
     public int getNumCompactions()       {return num_compactions;}
@@ -133,53 +115,33 @@ public class Table<T> implements Iterable<T> {
     public int getNumPurges()            {return num_purges;}
 
     /** Returns an appromximation of the number of elements in the table */
+    @Override
     public int size()                    {return size;}
+    @Override
     public boolean isEmpty()             {return size <= 0;}
-    public long getLow()                 {return low;}
+    @Override
+    public long low()                    {return low;}
+    @Override
+    public long high()                   {return getHighestReceived();}
+    @Override
     public long getHighestDelivered()    {return hd;}
+    @Override
     public long getHighestReceived()     {return hr;}
     public long getMaxCompactionTime()   {return max_compaction_time;}
-    public Table<T> setMaxCompactionTime(long max_compaction_time) {
+    public DynamicBuffer<T> setMaxCompactionTime(long max_compaction_time) {
         this.max_compaction_time=NANOSECONDS.convert(max_compaction_time, MILLISECONDS);
         return this;
     }
     public int  getNumRows()             {return matrix.length;}
+    @Override
     public void resetStats()             {num_compactions=num_moves=num_resizes=num_purges=0;}
 
-    /** Returns the highest deliverable (= removable) seqno. This may be higher than {@link #getHighestDelivered()},
-     * e.g. if elements have been added but not yet removed */
-    public long getHighestDeliverable() {
-        HighestDeliverable visitor=new HighestDeliverable();
-        lock.lock();
-        try {
-            forEach(hd+1, hr, visitor);
-            long retval=visitor.getResult();
-            return retval == -1? hd : retval;
-        }
-        finally {
-            lock.unlock();
-        }
-    }
 
-    /** Returns the number of messages that can be delivered */
-    public int getNumDeliverable() {
-        NumDeliverable visitor=new NumDeliverable();
-        lock.lock();
-        try {
-            forEach(hd+1, hr, visitor);
-            return visitor.getResult();
-        }
-        finally {
-            lock.unlock();
-        }
-    }
 
-    /**
-     * Only used internally by JGroups on a state transfer. Please don't use this in application code, or you're on
-     * your own !
-     * @param seqno
-     */
-    public Table<T> setHighestDelivered(long seqno) {
+
+
+    /** Only used internally by JGroups on a state transfer. Don't use this in application code! */
+    public DynamicBuffer<T> setHighestDelivered(long seqno) {
         lock.lock();
         try {
             hd=seqno;
@@ -197,6 +159,7 @@ public class Table<T> implements Iterable<T> {
      * @param element
      * @return True if the element at the computed index was null, else false
      */
+    @Override
     public boolean add(long seqno, T element) {
         lock.lock();
         try {
@@ -215,6 +178,7 @@ public class Table<T> implements Iterable<T> {
      * @param remove_filter If not null, a filter used to remove all consecutive messages passing the filter
      * @return True if the element at the computed index was null, else false
      */
+    @Override
     public boolean add(long seqno, T element, Predicate<T> remove_filter) {
         lock.lock();
         try {
@@ -230,6 +194,7 @@ public class Table<T> implements Iterable<T> {
      * @param list
      * @return True if at least 1 element was added successfully
      */
+    @Override
     public boolean add(final List<LongTuple<T>> list) {
        return add(list, false);
     }
@@ -240,6 +205,7 @@ public class Table<T> implements Iterable<T> {
      * @param list
      * @return True if at least 1 element was added successfully. This guarantees that the list has at least 1 element
      */
+    @Override
     public boolean add(final List<LongTuple<T>> list, boolean remove_added_elements) {
         return add(list, remove_added_elements, null);
     }
@@ -253,6 +219,7 @@ public class Table<T> implements Iterable<T> {
      * @param const_value If non-null, this value should be used rather than the values of the list tuples
      * @return True if at least 1 element was added successfully, false otherwise.
      */
+    @Override
     public boolean add(final List<LongTuple<T>> list, boolean remove_added_elements, T const_value) {
         if(list == null || list.isEmpty())
             return false;
@@ -281,6 +248,7 @@ public class Table<T> implements Iterable<T> {
     }
 
 
+    @Override
     public boolean add(MessageBatch batch, Function<T,Long> seqno_getter) {
         return add(batch, seqno_getter, false, null);
     }
@@ -295,6 +263,7 @@ public class Table<T> implements Iterable<T> {
      * @param const_value If non-null, this value should be used rather than the values of the list tuples
      * @return True if at least 1 element was added successfully, false otherwise.
      */
+    @Override
     public boolean add(MessageBatch batch, Function<T,Long> seqno_getter, boolean remove_from_batch, T const_value) {
         if(batch == null || batch.isEmpty())
             return false;
@@ -331,6 +300,7 @@ public class Table<T> implements Iterable<T> {
      * @param seqno
      * @return
      */
+    @Override
     public T get(long seqno) {
         lock.lock();
         try {
@@ -356,6 +326,7 @@ public class Table<T> implements Iterable<T> {
      * @param seqno
      * @return
      */
+    @Override
     public T _get(long seqno) {
         lock.lock();
         try {
@@ -374,11 +345,13 @@ public class Table<T> implements Iterable<T> {
     }
 
 
+    @Override
     public T remove() {
         return remove(true);
     }
 
     /** Removes the next non-null element and nulls the index if nullify=true */
+    @Override
     public T remove(boolean nullify) {
         lock.lock();
         try {
@@ -409,10 +382,12 @@ public class Table<T> implements Iterable<T> {
     }
 
 
+    @Override
     public List<T> removeMany(boolean nullify, int max_results) {
         return removeMany(nullify, max_results, null);
     }
 
+    @Override
     public List<T> removeMany(boolean nullify, int max_results, Predicate<T> filter) {
         return removeMany(nullify, max_results, filter, LinkedList::new, LinkedList::add);
     }
@@ -429,12 +404,13 @@ public class Table<T> implements Iterable<T> {
      * @param <R> the type of the result
      * @return the result
      */
+    @Override
     public <R> R removeMany(boolean nullify, int max_results, Predicate<T> filter,
                             Supplier<R> result_creator, BiConsumer<R,T> accumulator) {
         lock.lock();
         try {
-            Remover<R> remover=new Remover<>(nullify, max_results, filter, result_creator, accumulator);
-            forEach(hd+1, hr, remover);
+            Remover<R> remover=new Remover<>(max_results, filter, result_creator, accumulator);
+            forEach(remover, nullify);
             return remover.getResult();
         }
         finally {
@@ -442,26 +418,20 @@ public class Table<T> implements Iterable<T> {
         }
     }
 
-    /**
-     * Removes all elements less than or equal to seqno from the table. Does this by nulling entire rows in the matrix
-     * and nulling all elements < index(seqno) of the first row that cannot be removed
-     * @param seqno
-     */
-    public void purge(long seqno) {
-        purge(seqno, false);
-    }
 
     /**
      * Removes all elements less than or equal to seqno from the table. Does this by nulling entire rows in the matrix
      * and nulling all elements < index(seqno) of the first row that cannot be removed.
      * @param seqno All elements <= seqno will be nulled
      * @param force If true, we only ensure that seqno <= hr, but don't care about hd, and set hd=low=seqno.
+     * @return 0. This value is never used by {@link DynamicBuffer}, so it is <em>not</em> computed. Don't use it!
      */
-    public void purge(long seqno, boolean force) {
+    @Override
+    public int purge(long seqno, boolean force) {
         lock.lock();
         try {
             if(seqno - low <= 0)
-                return;
+                return 0;
             if(force) {
                 if(seqno - hr > 0)
                     seqno=hr;
@@ -474,7 +444,7 @@ public class Table<T> implements Iterable<T> {
             int start_row=computeRow(low), end_row=computeRow(seqno);
             if(start_row < 0) start_row=0;
             if(end_row < 0)
-                return;
+                return 0;
             for(int i=start_row; i < end_row; i++) // Null all rows which can be fully removed
                 matrix[i]=null;
 
@@ -492,7 +462,7 @@ public class Table<T> implements Iterable<T> {
             }
             num_purges++;
             if(max_compaction_time <= 0) // see if compaction should be triggered
-                return;
+                return 0;
 
             long current_time=System.nanoTime();
             if(last_compaction_timestamp > 0) {
@@ -503,6 +473,7 @@ public class Table<T> implements Iterable<T> {
             }
             else // the first time we don't do a compaction
                 last_compaction_timestamp=current_time;
+            return 0;
         }
         finally {
             lock.unlock();
@@ -519,17 +490,20 @@ public class Table<T> implements Iterable<T> {
         }
     }
 
+
     /**
      * Iterates over the matrix with range [from .. to] (including from and to), and calls
-     * {@link Visitor#visit(long,Object,int,int)}. If the visit() method returns false, the iteration is terminated.
-     * <p/>
+     * {@link Visitor#visit(long, Object)}. If the visit() method returns false, the iteration is terminated.
+     * <br/>
      * This method must be called with the lock held
      * @param from The starting seqno
      * @param to The ending seqno, the range is [from .. to] including from and to
      * @param visitor An instance of Visitor
+     * @param nullify Nulls the visited element when true
      */
     @GuardedBy("lock")
-    public void forEach(long from, long to, Visitor<T> visitor) {
+    @Override
+    public void forEach(long from, long to, Visitor<T> visitor, boolean nullify) {
         if(from - to > 0) // same as if(from > to), but prevents long overflow
             return;
         int row=computeRow(from), column=computeIndex(from);
@@ -538,9 +512,17 @@ public class Table<T> implements Iterable<T> {
 
         for(int i=0; i < distance; i++) {
             T element=current_row == null? null : current_row[column];
-            if(visitor != null && !visitor.visit(from, element, row, column))
+            boolean stop=visitor != null && !visitor.visit(from, element);
+            if(nullify && element != null) {
+                matrix[row][column]=null;
+                // if we're nulling the last element of a row, null the row as well
+                if(column == elements_per_row-1)
+                    matrix[row]=null;
+                if(from - low > 0)
+                    low=from;
+            }
+            if(stop)
                 break;
-
             from++;
             if(++column >= elements_per_row) {
                 column=0;
@@ -550,24 +532,29 @@ public class Table<T> implements Iterable<T> {
         }
     }
 
+    @Override
     public Iterator<T> iterator() {
         return new TableIterator();
     }
 
+    @Override
     public Iterator<T> iterator(long from, long to) {
         return new TableIterator(from, to);
     }
 
+    @Override
     public Stream<T> stream() {
         Spliterator<T> sp=Spliterators.spliterator(iterator(), size(), 0);
         return StreamSupport.stream(sp, false);
     }
 
+     @Override
      public Stream<T> stream(long from, long to) {
          Spliterator<T> sp=Spliterators.spliterator(iterator(from, to), size(), 0);
          return StreamSupport.stream(sp, false);
     }
 
+    @Override
     protected boolean _add(long seqno, T element, boolean check_if_resize_needed, Predicate<T> remove_filter) {
         if(seqno - hd <= 0)
             return false;
@@ -586,15 +573,14 @@ public class Table<T> implements Iterable<T> {
             if(seqno - hr > 0)
                 hr=seqno;
             if(remove_filter != null && seqno-hd > 0) {
-                forEach(hd + 1, hr,
-                        (seq, msg, r, c) -> {
-                            if(msg == null || !remove_filter.test(msg))
-                                return false;
-                            if(seq - hd > 0)
-                                hd=seq;
-                            size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
-                            return true;
-                        });
+                forEach((seq, msg) -> {
+                    if(msg == null || !remove_filter.test(msg))
+                        return false;
+                    if(seq - hd > 0)
+                        hd=seq;
+                    size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
+                    return true;
+                }, false);
             }
             return true;
         }
@@ -689,7 +675,8 @@ public class Table<T> implements Iterable<T> {
 
 
 
-    /** Iterate from low to hr and add up non-null values. Caller must hold the lock. */
+    /** Iterates from low to hr and add up non-null values. Caller must hold the lock. */
+    @Override
     @GuardedBy("lock")
     public int computeSize() {
         return (int)stream().filter(Objects::nonNull).count();
@@ -697,7 +684,8 @@ public class Table<T> implements Iterable<T> {
 
 
     /** Returns the number of null elements in the range [hd+1 .. hr-1] excluding hd and hr */
-    public int getNumMissing() {
+    @Override
+    public int numMissing() {
         lock.lock();
         try {
             return (int)(hr - hd - size);
@@ -712,6 +700,7 @@ public class Table<T> implements Iterable<T> {
      * Returns a list of missing (= null) elements
      * @return A SeqnoList of missing messages, or null if no messages are missing
      */
+    @Override
     public SeqnoList getMissing() {
        return getMissing(0);
     }
@@ -721,6 +710,7 @@ public class Table<T> implements Iterable<T> {
      * @param max_msgs If > 0, the max number of missing messages to be returned (oldest first), else no limit
      * @return A SeqnoList of missing messages, or null if no messages are missing
      */
+    @Override
     public SeqnoList getMissing(int max_msgs) {
         lock.lock();
         try {
@@ -733,7 +723,7 @@ public class Table<T> implements Iterable<T> {
                 return null;
             Missing missing=new Missing(start_seqno, max_size);
             long to=max_size > 0? Math.min(start_seqno + max_size-1, hr-1) : hr-1;
-            forEach(start_seqno, to, missing);
+            forEach(start_seqno, to, missing, false);
             return missing.getMissingElements();
         }
         finally {
@@ -741,6 +731,7 @@ public class Table<T> implements Iterable<T> {
         }
     }
 
+    @Override
     public long[] getDigest() {
         lock.lock();
         try {
@@ -752,12 +743,14 @@ public class Table<T> implements Iterable<T> {
     }
 
 
+    @Override
     public String toString() {
-        return String.format("[%d | %d | %d] (%d elements, %d missing)", low, hd, hr, size(), getNumMissing());
+        return String.format("[%d | %d | %d] (%d elements, %d missing)", low, hd, hr, size(), numMissing());
     }
 
 
     /** Dumps the seqnos in the table as a list */
+    @Override
     public String dump() {
         lock.lock();
         try {
@@ -859,7 +852,6 @@ public class Table<T> implements Iterable<T> {
 
 
     protected class Remover<R> implements Visitor<T> {
-        protected final boolean      nullify;
         protected final int          max_results;
         protected int                num_results;
         protected final Predicate<T> filter;
@@ -867,8 +859,7 @@ public class Table<T> implements Iterable<T> {
         protected Supplier<R>        result_creator;
         protected BiConsumer<R,T>    result_accumulator;
 
-        public Remover(boolean nullify, int max_results, Predicate<T> filter, Supplier<R> creator, BiConsumer<R,T> accumulator) {
-            this.nullify=nullify;
+        public Remover(int max_results, Predicate<T> filter, Supplier<R> creator, BiConsumer<R,T> accumulator) {
             this.max_results=max_results;
             this.filter=filter;
             this.result_creator=creator;
@@ -878,7 +869,7 @@ public class Table<T> implements Iterable<T> {
         public R getResult() {return result;}
 
         @GuardedBy("lock")
-        public boolean visit(long seqno, T element, int row, int column) {
+        public boolean visit(long seqno, T element) {
             if(element != null) {
                 if(filter == null || filter.test(element)) {
                     if(result == null)
@@ -889,14 +880,6 @@ public class Table<T> implements Iterable<T> {
                 if(seqno - hd > 0)
                     hd=seqno;
                 size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
-                if(nullify) {
-                    matrix[row][column]=null;
-                    // if we're nulling the last element of a row, null the row as well
-                    if(column == elements_per_row-1)
-                        matrix[row]=null;
-                    if(seqno - low > 0)
-                        low=seqno;
-                }
                 return max_results == 0 || num_results < max_results;
             }
             return false;
@@ -917,7 +900,7 @@ public class Table<T> implements Iterable<T> {
 
         protected SeqnoList getMissingElements() {return missing_elements;}
 
-        public boolean visit(long seqno, T element, int row, int column) {
+        public boolean visit(long seqno, T element) {
             if(element == null) {
                 if(++num_msgs > max_num_msgs)
                     return false;
@@ -928,31 +911,7 @@ public class Table<T> implements Iterable<T> {
     }
 
 
-    protected class HighestDeliverable implements Visitor<T> {
-        protected long highest_deliverable=-1;
 
-        public long getResult() {return highest_deliverable;}
-
-        public boolean visit(long seqno, T element, int row, int column) {
-            if(element == null)
-                return false;
-            highest_deliverable=seqno;
-            return true;
-        }
-    }
-
-    protected class NumDeliverable implements Visitor<T> {
-        protected int num_deliverable=0;
-
-        public int getResult() {return num_deliverable;}
-
-        public boolean visit(long seqno, T element, int row, int column) {
-            if(element == null)
-                return false;
-            num_deliverable++;
-            return true;
-        }
-    }
 
 }
 

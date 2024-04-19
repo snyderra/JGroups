@@ -1,0 +1,42 @@
+
+Design of FixedBuffer
+=====================
+Author: Bela Ban
+Date:   April 2024
+
+
+FixedBuffer is a class used by NAKACK4 [1] to deliver messages in correct order and repair lost messages.
+
+There is one ring buffer per member.
+
+Messages are added to the buffer by a sender, when sending a message, and by receivers when receiving a message.
+The messages are removed as long as there are no gaps (= missing messages), and delivered to the application.
+
+FixedBuffer is implemented as a (fixed capacity) array with wrap-around. Seqnos are mapped to an array index by a
+function similar to 'seqno % capacity'.
+
+FixedBuffer has 2 pointers: LOW seqno and HIGH seqno (LOW <+ HIGH always holds). Both point to the same seqno on
+creation of a FixedBuffer, and are modified as follows:
+
+* Add message M (sender):
+  * If M.seqno - LOW > capacity -> drop M or block (depending on parameter)
+  * Else:
+    * Add M at index(M.seqno) if null, else drop
+    * HIGH=max(HIGH,M.seqno)
+
+* Remove a message (receiver):
+  * If LOW <= HIGH and index(LOW) != null:
+    * Return element at index[LOW] and null index[LOW]
+    * LOW=LOW+1
+    * Unblock blocked adders
+  * Else -> return null
+
+* Purge elements (S: seqno)
+  * Null elements in range [index(LOW) .. index(min(S,HIGH)]
+  * LOW=min(S,HIGH)
+  * Unblock blocked adders
+
+
+Refs
+----
+[1] https://issues.redhat.com/browse/JGRP-2780
