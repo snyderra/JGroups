@@ -36,8 +36,8 @@ public class BufferTest {
     @DataProvider
     static Object[][] windowCreator() {
         return new Object[][]{
-          {new DynamicBuffer<>(0)}
-          //{new FixedBuffer<>(0)}
+          {new DynamicBuffer<>(0)},
+          {new FixedBuffer<>(0)}
         };
     }
 
@@ -1622,12 +1622,17 @@ public class BufferTest {
         assert buf.getHighestReceived()  == hr : "expected hr=" + hr + " but was " + buf.getHighestReceived();
     }
 
-     protected static class Adder extends Thread {
+    protected static <T> void assertIndices(Buffer<T> buf, long low, long high) {
+        assert buf.low() == low : String.format("expected low=%,d but was %,d", low, buf.low());
+        assert buf.high()  == high : String.format("expected hr=%,d but was %,d", high, buf.high());
+    }
+
+    protected static class Adder extends Thread {
         protected final CountDownLatch latch;
         protected final int            seqno;
         protected final Buffer<Integer> buf;
 
-         public Adder(CountDownLatch latch, int seqno, Buffer<Integer> buf) {
+        public Adder(CountDownLatch latch, int seqno, Buffer<Integer> buf) {
             this.latch=latch;
             this.seqno=seqno;
             this.buf=buf;
@@ -1642,6 +1647,32 @@ public class BufferTest {
             catch(InterruptedException e) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    protected static class BlockingAdder extends Thread {
+        protected final FixedBuffer<Integer> buf;
+        protected final int                  from, to;
+        protected int                        added;
+
+        protected BlockingAdder(FixedBuffer<Integer> buf, int from, int i) {
+            this.buf=buf;
+            this.from=from;
+            to=i;
+        }
+
+        public int added() {return added;}
+
+        @Override
+        public void run() {
+            for(int i=from; i <= to; i++) {
+                boolean rc=buf.add(i, i, true);
+                if(rc) {
+                    added++;
+                    System.out.printf("-- added %d\n", i);
+                }
+            }
+            System.out.printf("-- done, added %d elements\n", added);
         }
     }
 

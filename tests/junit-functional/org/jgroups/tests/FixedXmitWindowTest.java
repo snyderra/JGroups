@@ -15,6 +15,7 @@ import java.util.stream.IntStream;
  * @author Bela Ban
  * @since 3.1, 5.4
  */
+// TODO: move to BufferTest
 @Test(groups={Global.FUNCTIONAL,Global.EAP_EXCLUDED},description="Functional tests of Buffer implementations")
 public class FixedXmitWindowTest {
 
@@ -596,7 +597,7 @@ public class FixedXmitWindowTest {
 
 
 
-    protected static <T> void assertIndices(FixedBuffer<T> buf, long low, long high) {
+    protected static <T> void assertIndices(Buffer<T> buf, long low, long high) {
         assert buf.low() == low : String.format("expected low=%,d but was %,d", low, buf.low());
         assert buf.high()  == high : String.format("expected hr=%,d but was %,d", high, buf.high());
     }
