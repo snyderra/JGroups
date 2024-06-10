@@ -156,6 +156,7 @@ public abstract class ReliableMulticast extends Protocol implements DiagnosticsH
     }
 
     protected abstract Buffer<Message> createXmitWindow(long initial_seqno);
+    protected Buffer.Options sendOptions() {return Buffer.Options.DEFAULT();}
 
     @ManagedOperation(description="Clears the cache for messages from non-members")
     public void clearNonMemberCache() {
@@ -195,7 +196,7 @@ public abstract class ReliableMulticast extends Protocol implements DiagnosticsH
     protected final ConcurrentMap<Address,Buffer<Message>> xmit_table=Util.createConcurrentMap();
 
     /* Optimization: this is the table for my own messages (used in send()) */
-    protected Buffer<Message> local_xmit_table;
+    protected Buffer<Message>           local_xmit_table;
 
     /** RetransmitTask running every xmit_interval ms */
     protected Future<?>                 xmit_task;
@@ -681,11 +682,11 @@ public abstract class ReliableMulticast extends Protocol implements DiagnosticsH
 
         boolean dont_loopback_set=msg.isFlagSet(DONT_LOOPBACK);
         long msg_id=seqno.incrementAndGet();
+        msg.putHeader(this.id, NakAckHeader.createMessageHeader(msg_id));
         long sleep=10;
         do {
             try {
-                msg.putHeader(this.id, NakAckHeader.createMessageHeader(msg_id));
-                win.add(msg_id, msg, dont_loopback_set? dont_loopback_filter : null);
+                win.add(msg_id, msg, dont_loopback_set? dont_loopback_filter : null, Buffer.Options.DEFAULT());
                 break;
             }
             catch(Throwable t) {
