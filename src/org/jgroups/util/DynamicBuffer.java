@@ -7,7 +7,6 @@ import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -137,9 +136,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
     public void resetStats()             {num_compactions=num_moves=num_resizes=num_purges=0;}
 
 
-
-
-
     /** Only used internally by JGroups on a state transfer. Don't use this in application code! */
     public DynamicBuffer<T> setHighestDelivered(long seqno) {
         lock.lock();
@@ -155,111 +151,59 @@ public class DynamicBuffer<T> extends Buffer<T> {
     /**
      * Adds an element if the element at the given index is null. Returns true if no element existed at the given index,
      * else returns false and doesn't set the element.
-     * @param seqno
-     * @param element
-     * @return True if the element at the computed index was null, else false
-     */
-    @Override
-    public boolean add(long seqno, T element) {
-        lock.lock();
-        try {
-            return _add(seqno, element, true, null);
-        }
-        finally {
-            lock.unlock();
-        }
-    }
-
-    /**
-     * Adds an element if the element at the given index is null. Returns true if no element existed at the given index,
-     * else returns false and doesn't set the element.
+     *
      * @param seqno
      * @param element
      * @param remove_filter If not null, a filter used to remove all consecutive messages passing the filter
+     * @param ignored
      * @return True if the element at the computed index was null, else false
      */
     @Override
-    public boolean add(long seqno, T element, Predicate<T> remove_filter) {
+    public boolean add(long seqno, T element, Predicate<T> remove_filter, Options ignored) {
         lock.lock();
         try {
-            return _add(seqno, element, true, remove_filter);
-        }
-        finally {
-            lock.unlock();
-        }
-    }
+            if(seqno - hd <= 0)
+                return false;
 
-    /**
-     * Adds elements from list to the table
-     * @param list
-     * @return True if at least 1 element was added successfully
-     */
-    @Override
-    public boolean add(final List<LongTuple<T>> list) {
-       return add(list, false);
-    }
-
-
-    /**
-     * Adds elements from list to the table, removes elements from list that were not added to the table
-     * @param list
-     * @return True if at least 1 element was added successfully. This guarantees that the list has at least 1 element
-     */
-    @Override
-    public boolean add(final List<LongTuple<T>> list, boolean remove_added_elements) {
-        return add(list, remove_added_elements, null);
-    }
-
-    /**
-     * Adds elements from the list to the table
-     * @param list The list of tuples of seqnos and elements. If remove_added_elements is true, if elements could
-     *             not be added to the table (e.g. because they were already present or the seqno was < HD), those
-     *             elements will be removed from list
-     * @param remove_added_elements If true, elements that could not be added to the table are removed from list
-     * @param const_value If non-null, this value should be used rather than the values of the list tuples
-     * @return True if at least 1 element was added successfully, false otherwise.
-     */
-    @Override
-    public boolean add(final List<LongTuple<T>> list, boolean remove_added_elements, T const_value) {
-        if(list == null || list.isEmpty())
-            return false;
-        boolean added=false;
-        // find the highest seqno (unfortunately, the list is not ordered by seqno)
-        long highest_seqno=findHighestSeqno(list);
-        lock.lock();
-        try {
-            if(highest_seqno != -1 && computeRow(highest_seqno) >= matrix.length)
-                resize(highest_seqno);
-
-            for(Iterator<LongTuple<T>> it=list.iterator(); it.hasNext();) {
-                LongTuple<T> tuple=it.next();
-                long seqno=tuple.getVal1();
-                T element=const_value != null? const_value : tuple.getVal2();
-                if(_add(seqno, element, false, null))
-                    added=true;
-                else if(remove_added_elements)
-                    it.remove();
+            int row_index=computeRow(seqno);
+            if(row_index >= matrix.length) {
+                resize(seqno);
+                row_index=computeRow(seqno);
             }
-            return added;
+            T[] row=getRow(row_index);
+            int index=computeIndex(seqno);
+            T existing_element=row[index];
+            if(existing_element == null) {
+                row[index]=element;
+                size++;
+                if(seqno - hr > 0)
+                    hr=seqno;
+                if(remove_filter != null && seqno-hd > 0) {
+                    forEach((seq, msg) -> {
+                        if(msg == null || !remove_filter.test(msg))
+                            return false;
+                        if(seq - hd > 0)
+                            hd=seq;
+                        size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
+                        return true;
+                    }, false);
+                }
+                return true;
+            }
+            return false;
         }
         finally {
             lock.unlock();
         }
     }
 
-
-    @Override
-    public boolean add(MessageBatch batch, Function<T,Long> seqno_getter) {
-        return add(batch, seqno_getter, false, null);
-    }
 
     /**
      * Adds all messages from the given batch to the table
      * @param batch The batch
      * @param seqno_getter A function to return the sequence number (seqno) of a given Message. Must be non-null. If
      *                     the function return -1, then the message won't be added
-     * @param remove_from_batch If true, the message is removed <pre>regardless</pre> of whether it was added
-     *                          successfully or not
+     * @param remove_from_batch If true, the message is removed from the batch
      * @param const_value If non-null, this value should be used rather than the values of the list tuples
      * @return True if at least 1 element was added successfully, false otherwise.
      */
@@ -282,7 +226,7 @@ public class DynamicBuffer<T> extends Buffer<T> {
                 if(seqno < 0)
                     continue;
                 T element=const_value != null? const_value : msg;
-                boolean added=_add(seqno, element, false, null);
+                boolean added=add(seqno, element, null, Options.DEFAULT());
                 retval=retval || added;
                 if(!added || remove_from_batch)
                     it.remove();
@@ -381,12 +325,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
         }
     }
 
-
-    @Override
-    public List<T> removeMany(boolean nullify, int max_results) {
-        return removeMany(nullify, max_results, null);
-    }
-
     @Override
     public List<T> removeMany(boolean nullify, int max_results, Predicate<T> filter) {
         return removeMany(nullify, max_results, filter, LinkedList::new, LinkedList::add);
@@ -395,8 +333,8 @@ public class DynamicBuffer<T> extends Buffer<T> {
 
     /**
      * Removes elements from the table and adds them to the result created by result_creator. Between 0 and max_results
-     * elements are removed. If no elements were removed, processing will be set to true while the table lock is held.
-     * @param nullify if true, the x,y location of the removed element in the matrix will be nulled
+     * elements are removed.
+     * @param nullify if true, the removed element will be nulled
      * @param max_results the max number of results to be returned, even if more elements would be removable
      * @param filter a filter which accepts (or rejects) elements into the result. If null, all elements will be accepted
      * @param result_creator a supplier required to create the result, e.g. ArrayList::new
@@ -428,6 +366,7 @@ public class DynamicBuffer<T> extends Buffer<T> {
      */
     @Override
     public int purge(long seqno, boolean force) {
+        int purged=0;
         lock.lock();
         try {
             if(seqno - low <= 0)
@@ -444,14 +383,18 @@ public class DynamicBuffer<T> extends Buffer<T> {
             int start_row=computeRow(low), end_row=computeRow(seqno);
             if(start_row < 0) start_row=0;
             if(end_row < 0)
-                return 0;
+                return purged;
             for(int i=start_row; i < end_row; i++) // Null all rows which can be fully removed
                 matrix[i]=null;
 
             if(matrix[end_row] != null) {
                 int index=computeIndex(seqno);
-                for(int i=0; i <= index; i++) // null all elements up to and including seqno in the given row
-                    matrix[end_row][i]=null;
+                for(int i=0; i <= index; i++) { // null all elements up to and including seqno in the given row
+                    if(matrix[end_row][i] != null) {
+                        matrix[end_row][i]=null;
+                        purged++;
+                    }
+                }
             }
             if(seqno - low > 0)
                 low=seqno;
@@ -462,7 +405,7 @@ public class DynamicBuffer<T> extends Buffer<T> {
             }
             num_purges++;
             if(max_compaction_time <= 0) // see if compaction should be triggered
-                return 0;
+                return purged;
 
             long current_time=System.nanoTime();
             if(last_compaction_timestamp > 0) {
@@ -473,7 +416,7 @@ public class DynamicBuffer<T> extends Buffer<T> {
             }
             else // the first time we don't do a compaction
                 last_compaction_timestamp=current_time;
-            return 0;
+            return purged;
         }
         finally {
             lock.unlock();
@@ -552,39 +495,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
      public Stream<T> stream(long from, long to) {
          Spliterator<T> sp=Spliterators.spliterator(iterator(from, to), size(), 0);
          return StreamSupport.stream(sp, false);
-    }
-
-    @Override
-    protected boolean _add(long seqno, T element, boolean check_if_resize_needed, Predicate<T> remove_filter) {
-        if(seqno - hd <= 0)
-            return false;
-
-        int row_index=computeRow(seqno);
-        if(check_if_resize_needed && row_index >= matrix.length) {
-            resize(seqno);
-            row_index=computeRow(seqno);
-        }
-        T[] row=getRow(row_index);
-        int index=computeIndex(seqno);
-        T existing_element=row[index];
-        if(existing_element == null) {
-            row[index]=element;
-            size++;
-            if(seqno - hr > 0)
-                hr=seqno;
-            if(remove_filter != null && seqno-hd > 0) {
-                forEach((seq, msg) -> {
-                    if(msg == null || !remove_filter.test(msg))
-                        return false;
-                    if(seq - hd > 0)
-                        hd=seq;
-                    size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
-                    return true;
-                }, false);
-            }
-            return true;
-        }
-        return false;
     }
 
     // list must not be null or empty
@@ -697,15 +607,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
 
 
     /**
-     * Returns a list of missing (= null) elements
-     * @return A SeqnoList of missing messages, or null if no messages are missing
-     */
-    @Override
-    public SeqnoList getMissing() {
-       return getMissing(0);
-    }
-
-    /**
      * Returns a list of missing messages
      * @param max_msgs If > 0, the max number of missing messages to be returned (oldest first), else no limit
      * @return A SeqnoList of missing messages, or null if no messages are missing
@@ -747,21 +648,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
     public String toString() {
         return String.format("[%d | %d | %d] (%d elements, %d missing)", low, hd, hr, size(), numMissing());
     }
-
-
-    /** Dumps the seqnos in the table as a list */
-    @Override
-    public String dump() {
-        lock.lock();
-        try {
-            return stream(low, hr).filter(Objects::nonNull).map(Object::toString)
-              .collect(Collectors.joining(", "));
-        }
-        finally {
-            lock.unlock();
-        }
-    }
-
 
 
     /**
@@ -821,8 +707,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
         }
 
         protected TableIterator(final long from, final long to) {
-            //if(from - to > 0) // same as if(from > to), but prevents long overflow
-              //  throw new IllegalArgumentException(String.format("range [%d .. %d] invalid", from, to));
             this.from=from;
             this.to=to;
             row=computeRow(from);
@@ -847,8 +731,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
             return element;
         }
     }
-
-
 
 
     protected class Remover<R> implements Visitor<T> {
@@ -877,41 +759,14 @@ public class DynamicBuffer<T> extends Buffer<T> {
                     result_accumulator.accept(result, element);
                     num_results++;
                 }
+                size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
                 if(seqno - hd > 0)
                     hd=seqno;
-                size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
                 return max_results == 0 || num_results < max_results;
             }
             return false;
         }
     }
-
-
-
-    protected class Missing implements Visitor<T> {
-        protected final SeqnoList missing_elements;
-        protected final int       max_num_msgs;
-        protected int             num_msgs;
-
-        protected Missing(long start, int max_number_of_msgs) {
-            missing_elements=new SeqnoList(max_number_of_msgs, start);
-            this.max_num_msgs=max_number_of_msgs;
-        }
-
-        protected SeqnoList getMissingElements() {return missing_elements;}
-
-        public boolean visit(long seqno, T element) {
-            if(element == null) {
-                if(++num_msgs > max_num_msgs)
-                    return false;
-                missing_elements.add(seqno);
-            }
-            return true;
-        }
-    }
-
-
-
 
 }
 
