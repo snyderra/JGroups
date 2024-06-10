@@ -344,7 +344,7 @@ public class RingBufferSeqnoOld<T> implements Iterable<T> {
 
     /**
      * Returns an iterator over the elements of the ring buffer in the range [HD+1 .. HR]
-     * @return FixedXmitWindowIterator
+     * @return FixedBufferIterator
      * @throws NoSuchElementException is HD is moved forward during the iteration
      */
     public Iterator<T> iterator() {

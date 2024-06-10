@@ -2,6 +2,7 @@ package org.jgroups.tests;
 
 import org.jgroups.EmptyMessage;
 import org.jgroups.Message;
+import org.jgroups.util.Buffer;
 import org.jgroups.util.FixedBuffer;
 import org.jgroups.util.Util;
 
@@ -69,6 +70,7 @@ public class RingBufferStressTest {
         protected final FixedBuffer<Message> buf;
         protected final AtomicInteger num;
         protected final CountDownLatch latch;
+        protected static final Buffer.Options OPTS=new Buffer.Options().block(true);
 
         public Adder(FixedBuffer<Message> buf, CountDownLatch latch, AtomicInteger num) {
             this.buf=buf;
@@ -91,7 +93,7 @@ public class RingBufferStressTest {
                     num.decrementAndGet();
                     break;
                 }
-                buf.add(seqno, MSG, true);
+                buf.add(seqno, MSG, null, OPTS);
             }
         }
     }
@@ -117,7 +119,7 @@ public class RingBufferStressTest {
             for(;;) {
                 List<Message> msgs=buf.removeMany(100);
                 if(msgs != null) {
-                    for(Message msg: msgs) {
+                    for(Message __: msgs) {
                         cnt++;
                         removed.incrementAndGet();
                     }
