@@ -14,37 +14,30 @@ import java.util.stream.StreamSupport;
 
 /**
  * Ring buffer of fixed capacity. Indices low and high point to the beginning and end of the buffer. Sequence numbers
- * (seqnos) are mapped to an index by <pre>seqno % capacity</pre>. High can never pass low, and drops or blocks when
- * that's the case.<br/>
- * Note that 'null' is not a valid element.<br/>
+ * (seqnos) are mapped to an index by <pre>seqno % capacity</pre>. High can never pass low, and drops the element
+ * or blocks when that's the case.<br/>
+ * Note that 'null' is not a valid element, but signifies a missing element<br/>
  * The design is described in doc/design/FixedBuffer.txt.
  * @author Bela Ban
  * @since  5.4
  */
 public class FixedBuffer<T> extends Buffer<T> implements Closeable {
-    /**
-     * Element array. Should always be sized to a power of 2.
-     */
-    protected final T[] buf;
+    /** Holds the elements */
+    protected final T[]       buf;
 
-    /**
-     * The lowest seqno. Moved forward by remove and purge
-     */
-    protected long low;
+    /** The lowest seqno. Moved forward by remove and purge */
+    protected long            low;
 
-    /**
-     * The highest seqno. Moved forward by add(). The next message to be added is high+1
-     */
-    protected long high;
+    /** The highest seqno. Moved forward by add(). The next message to be added is high+1 */
+    protected long            high;
 
-    protected final long offset;
+    protected final long      offset;
 
     protected final Condition buffer_full=lock.newCondition();
 
-    /**
-     * Used to unblock blocked senders on close()
-     */
-    protected boolean open=true;
+    /** Used to unblock blocked senders on close() */
+    protected boolean         open=true;
+
 
     public FixedBuffer() {
         this(0);
@@ -257,41 +250,6 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
         }
     }
 
-    protected class Remover<R> implements Visitor<T> {
-        protected final int max_results;
-        protected int num_results;
-        protected final Predicate<T> filter;
-        protected R result;
-        protected Supplier<R> result_creator;
-        protected BiConsumer<R,T> result_accumulator;
-
-        public Remover(int max_results, Predicate<T> filter, Supplier<R> creator, BiConsumer<R,T> accumulator) {
-            this.max_results=max_results;
-            this.filter=filter;
-            this.result_creator=creator;
-            this.result_accumulator=accumulator;
-        }
-
-        public R getResult() {
-            return result;
-        }
-
-        @GuardedBy("lock")
-        public boolean visit(long seqno, T element) {
-            if(element == null)
-                return false;
-            if(filter == null || filter.test(element)) {
-                if(result == null)
-                    result=result_creator.get();
-                result_accumulator.accept(result, element);
-                num_results++;
-            }
-            if(seqno - low > 0)
-                low=seqno;
-            return max_results == 0 || num_results < max_results;
-        }
-    }
-
     public List<T> removeMany(int max_results) {
         List<T> list=null;
         int num_results=0;
@@ -455,25 +413,6 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
         }
     }
 
-    // @Override
-    public SeqnoList getMissing2(int max_msgs) {
-        SeqnoList missing=null;
-        lock.lock();
-        try {
-            for(long i=low + 1; i <= high; i++) { // <= high: correct as element at buf[high] will always be non-null!
-                if(buf[index(i)] == null) {
-                    if(missing == null)
-                        missing=new SeqnoList((int)(high - low), low);
-                    missing.add(i);
-                }
-            }
-            return missing;
-        }
-        finally {
-            lock.unlock();
-        }
-    }
-
     @Override
     public SeqnoList getMissing(int max_msgs) {
         lock.lock();
@@ -579,6 +518,40 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
         return retval;
     }
 
+    protected class Remover<R> implements Visitor<T> {
+        protected final int max_results;
+        protected int num_results;
+        protected final Predicate<T> filter;
+        protected R result;
+        protected Supplier<R> result_creator;
+        protected BiConsumer<R,T> result_accumulator;
+
+        public Remover(int max_results, Predicate<T> filter, Supplier<R> creator, BiConsumer<R,T> accumulator) {
+            this.max_results=max_results;
+            this.filter=filter;
+            this.result_creator=creator;
+            this.result_accumulator=accumulator;
+        }
+
+        public R getResult() {
+            return result;
+        }
+
+        @GuardedBy("lock")
+        public boolean visit(long seqno, T element) {
+            if(element == null)
+                return false;
+            if(filter == null || filter.test(element)) {
+                if(result == null)
+                    result=result_creator.get();
+                result_accumulator.accept(result, element);
+                num_results++;
+            }
+            if(seqno - low > 0)
+                low=seqno;
+            return max_results == 0 || num_results < max_results;
+        }
+    }
 
     protected class FixedBufferIterator implements Iterator<T> {
         protected final T[] buffer;
