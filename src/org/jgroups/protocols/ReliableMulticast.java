@@ -686,7 +686,7 @@ public abstract class ReliableMulticast extends Protocol implements DiagnosticsH
         long sleep=10;
         do {
             try {
-                win.add(msg_id, msg, dont_loopback_set? dont_loopback_filter : null, Buffer.Options.DEFAULT());
+                win.add(msg_id, msg, dont_loopback_set? dont_loopback_filter : null, sendOptions());
                 break;
             }
             catch(Throwable t) {
