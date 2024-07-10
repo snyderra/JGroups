@@ -29,7 +29,7 @@ import static org.jgroups.conf.AttributeType.SCALAR;
 
 
 /**
- * Base class for reliable multicas protocols
+ * Base class for reliable multicast protocols
  * @author Bela Ban
  * @since  5.4
  */
@@ -932,7 +932,6 @@ public abstract class ReliableMulticast extends Protocol implements DiagnosticsH
         xmit_msg.putHeader(id, newhdr);
         resend(xmit_msg);
     }
-
 
     protected void handleXmitRsp(Message msg, NakAckHeader hdr) {
         if(msg == null)

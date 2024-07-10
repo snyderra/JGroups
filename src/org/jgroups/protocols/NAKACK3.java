@@ -37,7 +37,6 @@ public class NAKACK3 extends ReliableMulticast {
       "is compacted (only for experts)",writable=false,type=AttributeType.TIME)
     protected long    xmit_table_max_compaction_time=10000;
 
-    protected static final Buffer.Options SEND_OPTS=new Buffer.Options();
 
     public int               getXmitTableNumRows()                 {return xmit_table_num_rows;}
     public ReliableMulticast setXmitTableNumRows(int x)            {this.xmit_table_num_rows=x; return this;}
