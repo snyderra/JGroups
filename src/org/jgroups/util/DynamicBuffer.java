@@ -34,14 +34,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
     protected final double         resize_factor;
     protected T[][]                matrix;
 
-    /** The first seqno, at matrix[0][0] */
-    protected long                 offset;
-
-    protected int                  size;
-
-    /** The highest seqno purged */
-    protected long                 low;
-
     /** The highest received seqno */
     protected long                 hr;
 
@@ -99,9 +91,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
     }
 
 
-
-    @Override
-    public long offset()                 {return offset;}
     public int  getElementsPerRow()      {return elements_per_row;}
 
     /** Returns the total capacity in the matrix */
@@ -113,13 +102,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
     public int getNumResizes()           {return num_resizes;}
     public int getNumPurges()            {return num_purges;}
 
-    /** Returns an appromximation of the number of elements in the table */
-    @Override
-    public int size()                    {return size;}
-    @Override
-    public boolean isEmpty()             {return size <= 0;}
-    @Override
-    public long low()                    {return low;}
     @Override
     public long high()                   {return getHighestReceived();}
     @Override

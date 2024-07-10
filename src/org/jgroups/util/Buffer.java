@@ -23,29 +23,25 @@ import java.util.stream.Stream;
  * @since  5.4
  */
 public abstract class Buffer<T> implements Iterable<T> {
-    protected final Lock           lock=new ReentrantLock();
-    protected final AtomicInteger  adders=new AtomicInteger(0);
+    protected final Lock          lock=new ReentrantLock();
+    protected final AtomicInteger adders=new AtomicInteger(0);
+    protected long                offset;
+    protected long                low;
+    /** The number of non-null elements */
+    protected int                 size;
 
     public Lock          lock()      {return lock;}
-
-    // used
     public AtomicInteger getAdders() {return adders;}
-
-    public abstract long offset();
+    public long          offset()    {return offset;}
+    public long          low()       {return low;}
+    public int           size()      {return size;}
+    public boolean       isEmpty()   {return size <= 0;}
 
     // used
     /** Returns the current capacity in the buffer. This value is fixed in a fixed-size buffer
      * (e.g. {@link FixedBuffer}), but can change in a dynamic buffer ({@link DynamicBuffer}) */
     public abstract int capacity();
 
-    // used
-    public abstract int size();
-
-    public abstract boolean isEmpty();
-
-    public abstract long low();
-
-    // used
     public abstract long high();
 
     // used in setting the digest
@@ -153,8 +149,6 @@ public abstract class Buffer<T> implements Iterable<T> {
 
     // used: in setting the digest
     public abstract <R extends Buffer<T>> R setHighestDelivered(long seqno);
-
-    public abstract String toString();
 
     /** Dumps all non-null messages (used for testing) */
     public String dump() {

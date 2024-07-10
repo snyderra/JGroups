@@ -25,14 +25,8 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
     /** Holds the elements */
     protected final T[]       buf;
 
-    /** The lowest seqno. Moved forward by remove and purge */
-    protected long            low;
-
     /** The highest seqno. Moved forward by add(). The next message to be added is high+1 */
     protected long            high;
-
-    protected final long      offset;
-
     protected final Condition buffer_full=lock.newCondition();
 
     /** Used to unblock blocked senders on close() */
@@ -63,51 +57,22 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
         this.low=this.high=this.offset=offset;
     }
 
-    @Override
-    public long offset() {
-        return offset;
-    }
 
-    public final int capacity() {
-        return buf.length;
-    }
-
-    @Override
-    public long low() {
-        return low;
-    }
-
-    public long high() {
-        return high;
-    }
-
-    @Override
-    public long getHighestDelivered() {
-        return low;
-    }
-
-    @Override
-    public long getHighestReceived() {
-        return high;
-    }
-
-    // todo: maintain 'size' field to avoid linear cost of iteration
-    public int size() {
-        return count(false);
-    }
-
-    @Override
-    public boolean isEmpty() {
-        return size() == 0;
-    }
+    @Override public int     capacity()            {return buf.length;}
+    @Override public long    high()                {return high;}
+    @Override public long    getHighestDelivered() {return low;}
+    @Override public long    getHighestReceived()  {return high;}
+    public int               spaceUsed()           {return (int)(high - low);}
 
     @Override
     public int numMissing() {
-        return count(true);
-    }
-
-    public int spaceUsed() {
-        return (int)(high - low);
+        lock.lock();
+        try {
+            return (int)(high - low - size);
+        }
+        finally {
+            lock.unlock();
+        }
     }
 
     public double saturation() {
@@ -117,7 +82,18 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
 
     @Override
     public int computeSize() {
-        return count(false);
+        if(high - low <= 0)
+            return 0;
+        int retval=0;
+        long from=low+1, to=high;
+        int distance=(int)(to - from +1);
+        for(int i=0; i < distance; i++,from++) {
+            int index=index(from);
+            T element=buf[index];
+            if(element != null)
+                retval++;
+        }
+        return retval;
     }
 
     @Override
@@ -151,6 +127,7 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
             if(buf[index] != null)
                 return false;
             buf[index]=element;
+            size++;
 
             // see if high needs to moved forward
             if(seqno - high > 0)
@@ -166,7 +143,6 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
                 };
                 forEach(getHighestDelivered()+1, getHighestReceived(), v, true, true);
             }
-
             return true;
         }
         finally {
@@ -204,7 +180,6 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
 
     /**
      * Removes the next non-null element and advances low
-     *
      * @return T if there was a non-null element at low+1, otherwise null
      */
     public T remove() {
@@ -218,6 +193,7 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
             if(element != null) {
                 low=tmp;
                 buf[index]=null;
+                size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
                 buffer_full.signalAll();
             }
             return element;
@@ -244,38 +220,6 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
             Remover<R> remover=new Remover<>(max_results, filter, result_creator, accumulator);
             forEach(remover, true);
             return remover.getResult();
-        }
-        finally {
-            lock.unlock();
-        }
-    }
-
-    public List<T> removeMany(int max_results) {
-        List<T> list=null;
-        int num_results=0;
-
-        lock.lock();
-        try {
-            long start=low;
-            // while(start + 1 <= high) {
-            while(high - start+1 >= 0) {
-                int index=index(start + 1);
-                T element=buf[index];
-                if(element == null)
-                    break;
-                if(list == null)
-                    list=new ArrayList<>(max_results > 0? max_results : 20);
-                list.add(element);
-                buf[index]=null; // need to null, otherwise a new message add fails if non-null (already inserted)
-                start++;
-                if(max_results > 0 && ++num_results >= max_results)
-                    break;
-            }
-            if(start - low > 0) {
-                low=start;
-                buffer_full.signalAll();
-            }
-            return list;
         }
         finally {
             lock.unlock();
@@ -310,33 +254,7 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
         }
     }
 
-
-    /**
-     * Only for testing: returns a list of messages in the range [from .. to], including from and to
-     *
-     * @param from
-     * @param to
-     * @return A list of messages, or null if none in range [from .. to] was found
-     */
-    public List<T> get(long from, long to) {
-        if(from - to > 0)
-            throw new IllegalArgumentException("from (" + from + ") has to be <= to (" + to + ")");
-        List<T> retval=null;
-        for(long i=from; i <= to; i++) {
-            T element=get(i);
-            if(element != null) {
-                if(retval == null)
-                    retval=new ArrayList<>();
-                retval.add(element);
-            }
-        }
-        return retval;
-    }
-
-
-    /**
-     * Nulls elements between low and seqno and forwards low. Returns the number of nulled elements.
-     */
+    /** Nulls elements between low and seqno and forwards low. Returns the number of nulled elements */
     public int purge(long seqno) {
         int count=0;
         lock.lock();
@@ -353,6 +271,7 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
                 int index=index(from);
                 if(buf[index] != null) {
                     buf[index]=null;
+                    size=Math.max(size-1, 0);
                     count++;
                 }
                 low++; from++;
@@ -390,6 +309,7 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
                 break;
             if(nullify && element != null) {
                 buf[index]=null;
+                size=Math.max(size-1, 0);
                 if(from - low > 0)
                     low=from;
             }
@@ -436,7 +356,13 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
 
     @Override
     public long[] getDigest() {
-        return new long[0];
+        lock.lock();
+        try {
+            return new long[]{low,high};
+        }
+        finally {
+            lock.unlock();
+        }
     }
 
     @Override
@@ -480,7 +406,7 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
 
     @Override
     public String toString() {
-        return String.format("[%,d | %,d] (%,d elements, %,d missing)", low, high, size(), numMissing());
+        return String.format("[%,d | %,d] (%,d elements, %,d missing)", low, high, size, numMissing());
     }
 
     protected int index(long seqno) {
@@ -500,31 +426,15 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
         return open;
     }
 
-    // todo: will be removed once we have field 'size'
-    protected int count(boolean missing) {
-        if(high - low <= 0)
-            return 0;
-        int retval=0;
-        long from=low+1, to=high;
-        int distance=(int)(to - from +1);
-        for(int i=0; i < distance; i++,from++) {
-            int index=index(from);
-            T element=buf[index];
-            if(missing && element == null)
-                retval++;
-            if(!missing && element != null)
-                retval++;
-        }
-        return retval;
-    }
+
 
     protected class Remover<R> implements Visitor<T> {
-        protected final int max_results;
-        protected int num_results;
+        protected final int          max_results;
+        protected int                num_results;
         protected final Predicate<T> filter;
-        protected R result;
-        protected Supplier<R> result_creator;
-        protected BiConsumer<R,T> result_accumulator;
+        protected R                  result;
+        protected Supplier<R>        result_creator;
+        protected BiConsumer<R,T>    result_accumulator;
 
         public Remover(int max_results, Predicate<T> filter, Supplier<R> creator, BiConsumer<R,T> accumulator) {
             this.max_results=max_results;

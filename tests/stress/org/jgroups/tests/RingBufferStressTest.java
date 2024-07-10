@@ -117,7 +117,7 @@ public class RingBufferStressTest {
             }
             int cnt=0;
             for(;;) {
-                List<Message> msgs=buf.removeMany(100);
+                List<Message> msgs=buf.removeMany(true,100);
                 if(msgs != null) {
                     for(Message __: msgs) {
                         cnt++;
