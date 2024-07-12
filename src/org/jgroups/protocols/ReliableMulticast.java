@@ -1070,7 +1070,7 @@ public abstract class ReliableMulticast extends Protocol implements DiagnosticsH
             if(win != null) {
                 if(local_addr.equals(member)) {
                     // Adjust the highest_delivered seqno (to send msgs again): https://issues.redhat.com/browse/JGRP-1251
-                    win.setHighestDelivered(highest_delivered_seqno);
+                    win.highestDelivered(highest_delivered_seqno);
                     continue; // don't destroy my own window
                 }
                 xmit_table.remove(member);
@@ -1113,7 +1113,7 @@ public abstract class ReliableMulticast extends Protocol implements DiagnosticsH
                 // don't reset our own window (https://issues.redhat.com/browse/JGRP-948, comment 20/Apr/09 03:39 AM)
                 if(!merge
                   || (Objects.equals(local_addr, member))                  // never overwrite our own entry
-                  || win.getHighestDelivered() >= highest_delivered_seqno) // my seqno is >= digest's seqno for sender
+                  || win.highestDelivered() >= highest_delivered_seqno) // my seqno is >= digest's seqno for sender
                     continue;
 
                 xmit_table.remove(member);
@@ -1160,7 +1160,7 @@ public abstract class ReliableMulticast extends Protocol implements DiagnosticsH
             // received for P in my digest. if yes, request retransmission (see "Last Message Dropped" topic in DESIGN)
             Buffer<Message> win=xmit_table.get(member);
             if(win != null && xmit_interval > 0) {
-                long my_hr=win.getHighestReceived();
+                long my_hr=win.high();
                 Long prev_hr=stable_xmit_map.get(member);
                 if(prev_hr != null && prev_hr > my_hr) {
                     log.trace("%s: my_highest_rcvd (%d) < stability_highest_rcvd (%d): requesting retransmission of %s",

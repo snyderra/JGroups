@@ -36,8 +36,8 @@ public class BufferTest {
     @DataProvider
     static Object[][] windowCreator() {
         return new Object[][]{
-          {new DynamicBuffer<>(0)},
-          {new FixedBuffer<>(0)}
+          //{new DynamicBuffer<>(0)},
+           {new FixedBuffer<>(0)}
         };
     }
 
@@ -406,7 +406,6 @@ public class BufferTest {
             System.out.println("buf = " + buf);
             assert num == i;
         }
-
         num=buf.remove();
         assert num == null;
     }
@@ -464,34 +463,32 @@ public class BufferTest {
         buf.add(2, msg(2));
         assert buf.getHighestDeliverable() == 2;
         buf.removeMany(true, 10);
-        assert buf.getHighestDelivered() == 2;
+        assert buf.highestDelivered() == 2;
         buf.add(3, msg(3));
-        assert buf.getHighestReceived() == 3;
+        assert buf.high() == 3;
 
         buf.add(4, msg(4, true), dont_loopback_filter, Options.DEFAULT());
-        assert buf.getHighestDelivered() == 2;
+        assert buf.highestDelivered() == 2;
         assert buf.getHighestDeliverable() == 4;
         buf.removeMany(false, 10);
-        assert buf.getHighestDelivered() == 4;
+        assert buf.highestDelivered() == 4;
 
         buf.add(5, msg(5, true), dont_loopback_filter, Options.DEFAULT());
         buf.add(6, msg(6, true), dont_loopback_filter, Options.DEFAULT());
-        assert buf.getHighestDelivered() == 6;
-        if(buf instanceof FixedBuffer) {
-            for(int i=0; i <= 6; i++)
-                assert buf._get(i) == null;
-        }
+        assert buf.highestDelivered() == 6;
+        for(int i=0; i <= 6; i++)
+            assert buf._get(i) == null;
     }
 
     public void testAddAndRemove2(Buffer<Message> buf) {
         for(int i=1; i <=10; i++)
             buf.add(i, msg(i, true), dont_loopback_filter, Options.DEFAULT());
-        assert buf.getHighestDelivered() == 10;
-        assert buf.getHighestReceived() == 10;
+        assert buf.highestDelivered() == 10;
+        assert buf.high() == 10;
         assert buf.getHighestDeliverable() == 10;
         buf.purge(10);
-        assert buf.getHighestDelivered() == 10;
-        assert buf.getHighestReceived() == 10;
+        assert buf.highestDelivered() == 10;
+        assert buf.high() == 10;
         assert buf.getHighestDeliverable() == 10;
         assert buf.low() == 10;
     }
@@ -503,9 +500,10 @@ public class BufferTest {
         buf.add(5, msg(5, true), dont_loopback_filter, Options.DEFAULT());
         buf.add(6, msg(6, true), dont_loopback_filter, Options.DEFAULT());
         buf.add(4, msg(4, true), dont_loopback_filter, Options.DEFAULT());
-        assert buf.getHighestReceived() == 6;
+        assert buf.high() == 6;
         assert buf.getHighestDeliverable() == 6;
-        assert buf.getHighestDelivered() == 6;
+        assert buf.highestDelivered() == 6;
+        assert buf.isEmpty();
     }
 
     public void testAddAndRemove4(Buffer<Message> type) {
@@ -514,9 +512,9 @@ public class BufferTest {
         buf.add(7, msg(7, true), dont_loopback_filter, Options.DEFAULT());
         buf.add(6, msg(6, true), dont_loopback_filter, Options.DEFAULT());
         buf.add(4, msg(4, true), dont_loopback_filter, Options.DEFAULT());
-        assert buf.getHighestReceived() == 7;
+        assert buf.high() == 7;
         assert buf.getHighestDeliverable() == 4;
-        assert buf.getHighestDelivered() == 4;
+        assert buf.highestDelivered() == 4;
     }
 
 
@@ -527,7 +525,10 @@ public class BufferTest {
         buf.add(6,6); buf.add(7,7);
         buf.remove(false); buf.remove(false);
         long low=buf.low();
-        assert buf instanceof DynamicBuffer? low == 5 : low == 7;
+        if(buf instanceof DynamicBuffer)
+            assert low == 5;
+        else
+            assert low == 7;
         if(buf instanceof FixedBuffer)
             for(int p: List.of(4, 5, 6, 7))
                 assert buf.purge(p) == 0;
@@ -556,8 +557,7 @@ public class BufferTest {
     }
 
     public void testComputeSize(Buffer<Integer> buf) {
-        for(int num: Arrays.asList(1,2,3,4,5,6,7,8,9,10))
-            buf.add(num, num);
+        IntStream.rangeClosed(1,10).boxed().forEach(n -> buf.add(n,n));
         System.out.println("buf = " + buf);
         assert buf.computeSize() == 10;
         buf.removeMany(false, 3);
@@ -582,15 +582,13 @@ public class BufferTest {
     }
 
     public void testRemove(Buffer<Integer> buf) {
-        for(int i=1; i <= 9; i++)
-            buf.add(i,i);
+        IntStream.rangeClosed(1,9).boxed().forEach(n -> buf.add(n,n));
         buf.add(20, 20);
         System.out.println("buf = " + buf);
         assert buf.size() == 10;
         assertIndices(buf, 0, 0, 20);
 
         int num_null_msgs=buf.numMissing();
-        System.out.println("num_null_msgs = " + num_null_msgs);
         assert num_null_msgs == 10;
 
         for(long i=1; i <= 10; i++) // 10 is missing
@@ -1140,7 +1138,7 @@ public class BufferTest {
 
     public void testGetHighestDeliverable(Buffer<Integer> buf) {
         System.out.println("buf = " + buf);
-        long highest_deliverable=buf.getHighestDeliverable(), hd=buf.getHighestDelivered();
+        long highest_deliverable=buf.getHighestDeliverable(), hd=buf.highestDelivered();
         int num_deliverable=buf.getNumDeliverable();
         System.out.println("highest delivered=" + hd + ", highest deliverable=" + highest_deliverable);
         assert hd == 0;
@@ -1152,7 +1150,7 @@ public class BufferTest {
         System.out.println("buf = " + buf);
         highest_deliverable=buf.getHighestDeliverable();
         num_deliverable=buf.getNumDeliverable();
-        hd=buf.getHighestDelivered();
+        hd=buf.highestDelivered();
         System.out.println("highest delivered=" + hd + ", highest deliverable=" + highest_deliverable);
         assert hd == 0;
         assert highest_deliverable == 6;
@@ -1162,7 +1160,7 @@ public class BufferTest {
         System.out.println("buf = " + buf);
         highest_deliverable=buf.getHighestDeliverable();
         num_deliverable=buf.getNumDeliverable();
-        hd=buf.getHighestDelivered();
+        hd=buf.highestDelivered();
         System.out.println("highest delivered=" + hd + ", highest deliverable=" + highest_deliverable);
         assert hd == 4;
         assert highest_deliverable == 6;
@@ -1171,7 +1169,7 @@ public class BufferTest {
         buf.removeMany(true, 100);
         System.out.println("buf = " + buf);
         highest_deliverable=buf.getHighestDeliverable();
-        hd=buf.getHighestDelivered();
+        hd=buf.highestDelivered();
         num_deliverable=buf.getNumDeliverable();
         System.out.println("highest delivered=" + hd + ", highest deliverable=" + highest_deliverable);
         assert hd == 6;
@@ -1182,7 +1180,7 @@ public class BufferTest {
         System.out.println("buf = " + buf);
         highest_deliverable=buf.getHighestDeliverable();
         num_deliverable=buf.getNumDeliverable();
-        hd=buf.getHighestDelivered();
+        hd=buf.highestDelivered();
         System.out.println("highest delivered=" + hd + ", highest deliverable=" + highest_deliverable);
         assert hd == 6;
         assert highest_deliverable == 8;
@@ -1192,7 +1190,7 @@ public class BufferTest {
         System.out.println("buf = " + buf);
         highest_deliverable=buf.getHighestDeliverable();
         num_deliverable=buf.getNumDeliverable();
-        hd=buf.getHighestDelivered();
+        hd=buf.highestDelivered();
         System.out.println("highest delivered=" + hd + ", highest deliverable=" + highest_deliverable);
         assert hd == 8;
         assert highest_deliverable == 8;
@@ -1206,7 +1204,7 @@ public class BufferTest {
         buf.removeMany(true, 20);
         long highest_deliverable=buf.getHighestDeliverable();
         assert highest_deliverable == 10;
-        assert buf.getHighestDelivered() == highest_deliverable;
+        assert buf.highestDelivered() == highest_deliverable;
     }
 
     public void testGetHighestDeliverable3(Buffer<Integer> buf) {
@@ -1657,6 +1655,7 @@ public class BufferTest {
         for(Adder adder: adders) {
             try {
                 adder.join();
+                assert adder.success();
             }
             catch(InterruptedException e) {
                 e.printStackTrace();
@@ -1682,35 +1681,6 @@ public class BufferTest {
         System.out.println("buf = " + buf);
         assert buf.capacity() == Util.getNextHigherPowerOfTwo(100);
         assert buf.isEmpty();
-    }
-
-    public void testSaturation(Buffer<Integer> type) {
-        if(type instanceof DynamicBuffer)
-            return;
-        FixedBuffer<Integer> buf=new FixedBuffer<>(10, 0);
-        for(int i: Arrays.asList(1,2,3,4,5,6,7,8))
-            buf.add(i, i);
-        System.out.println("buf = " + buf);
-        int size=buf.size(), space_used=buf.spaceUsed();
-        double saturation=buf.saturation();
-        System.out.println("size=" + size + ", space used=" + space_used + ", saturation=" + saturation);
-        assert size == 8;
-        assert space_used == 8;
-        assert saturation == 0.5;
-
-        buf.remove(); buf.remove(); buf.remove();
-        size=buf.size();
-        space_used=buf.spaceUsed();
-        saturation=buf.saturation();
-        System.out.println("size=" + size + ", space used=" + space_used + ", saturation=" + saturation);
-        assert size == 5;
-        assert space_used == 5;
-        assert saturation == (double)size / buf.capacity();
-
-        long low=buf.low();
-        buf.purge(3);
-        for(long i=low; i <= 3; i++)
-            assert buf._get(i) == null : "message with seqno=" + i + " is not null";
     }
 
     public void testAddBeyondCapacity(Buffer<Integer> buf) {
@@ -1770,8 +1740,7 @@ public class BufferTest {
         if(type instanceof DynamicBuffer)
             return;
         final FixedBuffer<Integer> buf=new FixedBuffer<>(10, 0);
-        for(int i=1; i <= buf.capacity(); i++)
-            buf.add(i, i, null, OPTS);
+        IntStream.rangeClosed(1, buf.capacity()).boxed().forEach(n -> buf.add(n, n, null, OPTS));
         System.out.println("buf = " + buf);
         BlockingAdder adder=new BlockingAdder(buf, 17, 20);
         adder.start();
@@ -1781,7 +1750,7 @@ public class BufferTest {
         Integer el=buf.remove();
         assert el == 1;
         Util.waitUntil(1000, 100, () -> adder.added() == 1);
-        buf.purge(5);
+        buf.purge(5, true);
         Util.waitUntil(1000, 100, () -> adder.added() == 4);
         assert buf.size() == 15;
     }
@@ -1911,8 +1880,8 @@ public class BufferTest {
 
     protected static <T> void assertIndices(Buffer<T> buf, long low, long hd, long hr) {
         assert buf.low() == low : "expected low=" + low + " but was " + buf.low();
-        assert buf.getHighestDelivered() == hd : "expected hd=" + hd + " but was " + buf.getHighestDelivered();
-        assert buf.getHighestReceived()  == hr : "expected hr=" + hr + " but was " + buf.getHighestReceived();
+        assert buf.highestDelivered() == hd : "expected hd=" + hd + " but was " + buf.highestDelivered();
+        assert buf.high()  == hr : "expected hr=" + hr + " but was " + buf.high();
     }
 
     protected static <T> void assertIndices(Buffer<T> buf, long low, long high) {

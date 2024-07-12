@@ -15,8 +15,22 @@ The messages are removed as long as there are no gaps (= missing messages), and 
 FixedBuffer is implemented as a (fixed capacity) array with wrap-around. Seqnos are mapped to an array index by a
 function similar to 'seqno % capacity'.
 
-FixedBuffer has 2 pointers: LOW seqno and HIGH seqno (LOW <+ HIGH always holds). Both point to the same seqno on
-creation of a FixedBuffer, and are modified as follows:
+FixedBuffer has 3 pointers: LOW, HD and HIGH. They are used as follows:
+
+In a send/receive window (used to send messages to everyone and also receive its own (loopback) messages):
+* LOW: the highest seqno seen by everyone; incremented when we've received ACKs from every receiver (min of all ACKs).
+       This unblocks blocked senders.
+* HD: the highest seqno delivered to the application (incremented on removal of loopback messages)
+* HIGH: the highest seqno sent/received
+
+In a receive window:
+* LOW: - (same as HD)
+* HD: the highest seqno delivered to the application (incremented on removal, together with LOW)
+* HIGH: the highest seqno received
+
+LOW <= HD <= HIGH always holds.
+
+All 3 pointers point to the same seqno on creation of a FixedBuffer, and are modified as follows:
 
 * Add message M (sender):
   * If M.seqno - LOW > capacity -> drop M or block (depending on parameter)

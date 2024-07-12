@@ -16,9 +16,9 @@ was done to leave NAKACK2 completely untouched. This means that one of the follo
 NAKACK2) and makes minimal changes, the risks are small. The benefits are that MFC and STABLE protocols are no longer
 needed, and features described in JGRP-2780 are available.
 
-An xmit window has a low and high index, with the following semantics:
-* On the sender: low = highest acked, high = highest sent seqno
-* On the receiver: low = highest delivered, high = highest received seqno
+An xmit window has a low, hd (=highest delivered) and high index, with the following semantics:
+* On the sender: low = highest acked (=seen by everyone), hd = highest delivered seqno, high = highest sent seqno
+* On the receiver: low = hd = highest delivered seqno, high = highest received seqno
 
 Seqnos are mapped to an index in the ring buffer.
 
@@ -27,7 +27,7 @@ A sender blocks sending a message when no space is available in the window, whil
 Receivers ack delivered messages, either periodically (xmit_interval), or after delivery of N messages.
 
 When a sender has received acks from all receivers (cluster members), it computes minimum M and purges all messages
-lower than M. This may unblock sender threads waiting for space to add their messages.
+lower than M, setting 'low'. This may unblock sender threads waiting for space to add their messages.
 
 Every receiver periodically (xmit_interval) checks its receiver tables, and asks senders for missing messages.
 

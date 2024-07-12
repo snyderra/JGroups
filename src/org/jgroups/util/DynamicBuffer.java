@@ -34,12 +34,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
     protected final double         resize_factor;
     protected T[][]                matrix;
 
-    /** The highest received seqno */
-    protected long                 hr;
-
-    /** The highest delivered (= removed) seqno */
-    protected long                 hd;
-
     /** Time (in nanoseconds) after which a compaction should take place. 0 disables compaction */
     protected long                 max_compaction_time=NANOSECONDS.convert(DEFAULT_MAX_COMPACTION_TIME, MILLISECONDS);
 
@@ -60,7 +54,7 @@ public class DynamicBuffer<T> extends Buffer<T> {
 
     public DynamicBuffer(long offset) {
         this();
-        this.offset=this.low=this.hr=this.hd=offset;
+        this.offset=this.low=this.high=this.hd=offset;
     }
 
     public DynamicBuffer(int num_rows, int elements_per_row, long offset) {
@@ -84,50 +78,33 @@ public class DynamicBuffer<T> extends Buffer<T> {
         this.elements_per_row=Util.getNextHigherPowerOfTwo(elements_per_row);
         this.resize_factor=resize_factor;
         this.max_compaction_time=NANOSECONDS.convert(max_compaction_time, MILLISECONDS);
-        this.offset=this.low=this.hr=this.hd=offset;
+        this.offset=this.low=this.high=this.hd=offset;
         matrix=(T[][])new Object[num_rows][];
         if(resize_factor <= 1)
             throw new IllegalArgumentException("resize_factor needs to be > 1");
     }
 
 
-    public int  getElementsPerRow()      {return elements_per_row;}
+    public int  getElementsPerRow()    {return elements_per_row;}
 
     /** Returns the total capacity in the matrix */
     @Override
-    public int capacity()                {return matrix.length * elements_per_row;}
+    public int  capacity()             {return matrix.length * elements_per_row;}
+    public int  getNumRows()           {return matrix.length;}
+    public int  getNumCompactions()    {return num_compactions;}
+    public int  getNumMoves()          {return num_moves;}
+    public int  getNumResizes()        {return num_resizes;}
+    public int  getNumPurges()         {return num_purges;}
+    public long getMaxCompactionTime() {return max_compaction_time;}
 
-    public int getNumCompactions()       {return num_compactions;}
-    public int getNumMoves()             {return num_moves;}
-    public int getNumResizes()           {return num_resizes;}
-    public int getNumPurges()            {return num_purges;}
-
-    @Override
-    public long high()                   {return getHighestReceived();}
-    @Override
-    public long getHighestDelivered()    {return hd;}
-    @Override
-    public long getHighestReceived()     {return hr;}
-    public long getMaxCompactionTime()   {return max_compaction_time;}
     public DynamicBuffer<T> setMaxCompactionTime(long max_compaction_time) {
         this.max_compaction_time=NANOSECONDS.convert(max_compaction_time, MILLISECONDS);
         return this;
     }
-    public int  getNumRows()             {return matrix.length;}
+
     @Override
-    public void resetStats()             {num_compactions=num_moves=num_resizes=num_purges=0;}
-
-
-    /** Only used internally by JGroups on a state transfer. Don't use this in application code! */
-    public DynamicBuffer<T> setHighestDelivered(long seqno) {
-        lock.lock();
-        try {
-            hd=seqno;
-            return this;
-        }
-        finally {
-            lock.unlock();
-        }
+    public void resetStats() {
+        num_compactions=num_moves=num_resizes=num_purges=0;
     }
 
     /**
@@ -158,8 +135,8 @@ public class DynamicBuffer<T> extends Buffer<T> {
             if(existing_element == null) {
                 row[index]=element;
                 size++;
-                if(seqno - hr > 0)
-                    hr=seqno;
+                if(seqno - high > 0)
+                    high=seqno;
                 if(remove_filter != null && seqno-hd > 0) {
                     forEach((seq, msg) -> {
                         if(msg == null || !remove_filter.test(msg))
@@ -230,7 +207,7 @@ public class DynamicBuffer<T> extends Buffer<T> {
     public T get(long seqno) {
         lock.lock();
         try {
-            if(seqno - low <= 0 || seqno - hr > 0)
+            if(seqno - low <= 0 || seqno - high > 0)
                 return null;
             int row_index=computeRow(seqno);
             if(row_index < 0 || row_index >= matrix.length)
@@ -354,8 +331,8 @@ public class DynamicBuffer<T> extends Buffer<T> {
             if(seqno - low <= 0)
                 return 0;
             if(force) {
-                if(seqno - hr > 0)
-                    seqno=hr;
+                if(seqno - high > 0)
+                    seqno=high;
             }
             else {
                 if(seqno - hd > 0) // we cannot be higher than the highest removed seqno
@@ -551,7 +528,7 @@ public class DynamicBuffer<T> extends Buffer<T> {
     @GuardedBy("lock")
     protected void _compact() {
         // This is the range we need to copy into the new matrix (including from and to)
-        int from=computeRow(low), to=computeRow(hr);
+        int from=computeRow(low), to=computeRow(high);
         int range=to - from +1;  // e.g. from=3, to=5, new_size has to be [3 .. 5] (=3)
 
         int new_size=(int)Math.max( (double)range * resize_factor, (double) range +1 );
@@ -565,72 +542,12 @@ public class DynamicBuffer<T> extends Buffer<T> {
         }
     }
 
-
-
     /** Iterates from low to hr and add up non-null values. Caller must hold the lock. */
     @Override
     @GuardedBy("lock")
     public int computeSize() {
         return (int)stream().filter(Objects::nonNull).count();
     }
-
-
-    /** Returns the number of null elements in the range [hd+1 .. hr-1] excluding hd and hr */
-    @Override
-    public int numMissing() {
-        lock.lock();
-        try {
-            return (int)(hr - hd - size);
-        }
-        finally {
-            lock.unlock();
-        }
-    }
-
-
-    /**
-     * Returns a list of missing messages
-     * @param max_msgs If > 0, the max number of missing messages to be returned (oldest first), else no limit
-     * @return A SeqnoList of missing messages, or null if no messages are missing
-     */
-    @Override
-    public SeqnoList getMissing(int max_msgs) {
-        lock.lock();
-        try {
-            if(size == 0)
-                return null;
-            long start_seqno=getHighestDeliverable() +1;
-            int capacity=(int)(hr - start_seqno);
-            int max_size=max_msgs > 0? Math.min(max_msgs, capacity) : capacity;
-            if(max_size <= 0)
-                return null;
-            Missing missing=new Missing(start_seqno, max_size);
-            long to=max_size > 0? Math.min(start_seqno + max_size-1, hr-1) : hr-1;
-            forEach(start_seqno, to, missing, false);
-            return missing.getMissingElements();
-        }
-        finally {
-            lock.unlock();
-        }
-    }
-
-    @Override
-    public long[] getDigest() {
-        lock.lock();
-        try {
-            return new long[]{hd,hr};
-        }
-        finally {
-            lock.unlock();
-        }
-    }
-
-
-    @Override
-    public String toString() {
-        return String.format("[%d | %d | %d] (%d elements, %d missing)", low, hd, hr, size(), numMissing());
-    }
-
 
     /**
      * Returns a row. Creates a new row and inserts it at index if the row at index doesn't exist
@@ -685,7 +602,7 @@ public class DynamicBuffer<T> extends Buffer<T> {
         protected final long  to;
 
         protected TableIterator() {
-            this(hd+1, hr);
+            this(hd+1, high);
         }
 
         protected TableIterator(final long from, final long to) {

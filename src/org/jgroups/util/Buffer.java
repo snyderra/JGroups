@@ -26,32 +26,36 @@ public abstract class Buffer<T> implements Iterable<T> {
     protected final Lock          lock=new ReentrantLock();
     protected final AtomicInteger adders=new AtomicInteger(0);
     protected long                offset;
+
+    /** sender: highest seqno seen by everyone, receiver: highest delivered seqno */
     protected long                low;
+
+    /** The highest delivered (=removed) seqno */
+    protected long                hd;
+
+    /** The highest received/sent seqno. Moved forward by add(). The next message to be added is high+1.
+     low <= hd <= high always holds */
+    protected long                high;
+
     /** The number of non-null elements */
     protected int                 size;
 
-    public Lock          lock()      {return lock;}
-    public AtomicInteger getAdders() {return adders;}
-    public long          offset()    {return offset;}
-    public long          low()       {return low;}
-    public int           size()      {return size;}
-    public boolean       isEmpty()   {return size <= 0;}
+    public Lock          lock()               {return lock;}
+    public AtomicInteger getAdders()          {return adders;}
+    public long          offset()             {return offset;}
+    public long          low()                {return low;}
+    public long          highestDelivered()   {return hd;}
+    public long          hd()                 {return hd;}
+    public long          high()               {return high;}
+    public int           size()               {return size;}
+    public boolean       isEmpty()            {return size <= 0;}
 
-    // used
     /** Returns the current capacity in the buffer. This value is fixed in a fixed-size buffer
      * (e.g. {@link FixedBuffer}), but can change in a dynamic buffer ({@link DynamicBuffer}) */
     public abstract int capacity();
 
-    public abstract long high();
-
-    // used in setting the digest
-    public abstract long getHighestDelivered();
-
-    // used in stable()
-    public abstract long getHighestReceived();
-
-    // used
-    public abstract void resetStats();
+    public void resetStats() {
+    }
 
     /**
      * Adds an element if the element at the given index is null. Returns true if no element existed at the given index,
@@ -115,7 +119,7 @@ public abstract class Buffer<T> implements Iterable<T> {
     public abstract int purge(long seqno, boolean force);
 
     public void forEach(Visitor<T> visitor, boolean nullify) {
-        forEach(getHighestDelivered()+1, getHighestReceived(), visitor, nullify);
+        forEach(highestDelivered()+1, high(), visitor, nullify);
     }
 
     public abstract void forEach(long from, long to, Visitor<T> visitor, boolean nullify);
@@ -130,8 +134,16 @@ public abstract class Buffer<T> implements Iterable<T> {
     @GuardedBy("lock")
     public abstract int computeSize();
 
-    // used
-    public abstract int numMissing();
+    /** Returns the number of null elements in the range [hd+1 .. hr-1] excluding hd and hr */
+    public int numMissing() {
+        lock.lock();
+        try {
+            return (int)(high - hd - size);
+        }
+        finally {
+            lock.unlock();
+        }
+    }
 
     /**
      * Returns a list of missing (= null) elements
@@ -141,25 +153,97 @@ public abstract class Buffer<T> implements Iterable<T> {
         return getMissing(0);
     }
 
-    // used in retransmission
-    public abstract SeqnoList getMissing(int max_msgs);
+    /**
+     * Returns a list of missing messages
+     * @param max_msgs If > 0, the max number of missing messages to be returned (oldest first), else no limit
+     * @return A SeqnoList of missing messages, or null if no messages are missing
+     */
+    public SeqnoList getMissing(int max_msgs) {
+        lock.lock();
+        try {
+            if(isEmpty())
+                return null;
+            long start_seqno=getHighestDeliverable() + 1;
+            int capacity=(int)(high - start_seqno);
+            int max_size=max_msgs > 0? Math.min(max_msgs, capacity) : capacity;
+            if(max_size <= 0)
+                return null;
+            Missing missing=new Missing(start_seqno, max_size);
+            long to=max_size > 0? Math.min(start_seqno + max_size - 1, high - 1) : high - 1;
+            forEach(start_seqno, to, missing, false);
+            return missing.getMissingElements();
+        }
+        finally {
+            lock.unlock();
+        }
+    }
 
-    // used
-    public abstract long[] getDigest();
+    /** Returns the number of messages that can be delivered */
+    public int getNumDeliverable() {
+        NumDeliverable visitor=new NumDeliverable();
+        lock.lock();
+        try {
+            forEach(visitor, false);
+            return visitor.getResult();
+        }
+        finally {
+            lock.unlock();
+        }
+    }
 
-    // used: in setting the digest
-    public abstract <R extends Buffer<T>> R setHighestDelivered(long seqno);
+    /** Returns the highest deliverable (= removable) seqno. This may be higher than {@link #highestDelivered()},
+     * e.g. if elements have been added but not yet removed */
+    // used in retransmissions
+    public long getHighestDeliverable() {
+        HighestDeliverable visitor=new HighestDeliverable();
+        lock.lock();
+        try {
+            forEach(visitor, false);
+            long retval=visitor.getResult();
+            return retval == -1? highestDelivered() : retval;
+        }
+        finally {
+            lock.unlock();
+        }
+    }
+
+    public long[] getDigest() {
+        lock.lock();
+        try {
+            return new long[]{hd, high};
+        }
+        finally {
+            lock.unlock();
+        }
+    }
+
+    /** Only used internally on a state transfer (setting the digest). Don't use this in application code! */
+    public Buffer<T> highestDelivered(long seqno) {
+        lock.lock();
+        try {
+            hd=seqno;
+            return this;
+        }
+        finally {
+            lock.unlock();
+        }
+    }
 
     /** Dumps all non-null messages (used for testing) */
     public String dump() {
         lock.lock();
         try {
-            return stream(low(), getHighestReceived()).filter(Objects::nonNull).map(Object::toString)
+            return stream(low(), high()).filter(Objects::nonNull).map(Object::toString)
               .collect(Collectors.joining(", "));
         }
         finally {
             lock.unlock();
         }
+    }
+
+    @Override
+    public String toString() {
+        return String.format("[%,d | %,d | %,d] (%,d elements, %,d missing)", low, hd, high, size, numMissing());
     }
 
     public static class Options {
@@ -190,35 +274,6 @@ public abstract class Buffer<T> implements Iterable<T> {
          * @return True if we should continue the iteration, false if we should break out of the iteration
          */
         boolean visit(long seqno, T element);
-    }
-
-    /** Returns the number of messages that can be delivered */
-    public int getNumDeliverable() {
-        NumDeliverable visitor=new NumDeliverable();
-        lock.lock();
-        try {
-            forEach(visitor, false);
-            return visitor.getResult();
-        }
-        finally {
-            lock.unlock();
-        }
-    }
-
-    /** Returns the highest deliverable (= removable) seqno. This may be higher than {@link #getHighestDelivered()},
-     * e.g. if elements have been added but not yet removed */
-    // used in retransmissions
-    public long getHighestDeliverable() {
-        HighestDeliverable visitor=new HighestDeliverable();
-        lock.lock();
-        try {
-            forEach(visitor, false);
-            long retval=visitor.getResult();
-            return retval == -1? getHighestDelivered() : retval;
-        }
-        finally {
-            lock.unlock();
-        }
     }
 
     protected class NumDeliverable implements Visitor<T> {
