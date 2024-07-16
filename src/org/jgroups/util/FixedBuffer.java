@@ -56,7 +56,7 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
 
     @Override public int capacity() {return buf.length;}
 
-    @Override
+    /*@Override
     public int computeSize() {
         if(high - low <= 0)
             return 0;
@@ -70,7 +70,7 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
                 retval++;
         }
         return retval;
-    }
+    }*/
 
 
     /**
@@ -104,15 +104,16 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
             if(seqno - high > 0)
                 high=seqno;
 
-            if(remove_filter != null && seqno - low > 0) {
+            if(remove_filter != null && seqno - hd > 0) {
                 Visitor<T> v=(seq,msg) -> {
                     if(msg == null || !remove_filter.test(msg))
                         return false;
-                    if(seq - low > 0)
-                        low=seq;
+                    if(seq - hd > 0)
+                        hd=seq;
+                    size=Math.max(size-1, 0);
                     return true;
                 };
-                forEach(highestDelivered()+1, high(), v, true, true);
+                forEach(highestDelivered()+1, high(), v, false, true);
             }
             return true;
         }
@@ -153,7 +154,8 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
      * Removes the next non-null element and advances hd
      * @return T if there was a non-null element at hd+1, otherwise null
      */
-    public T remove() {
+    @Override
+    public T remove(boolean nullify) {
         lock.lock();
         try {
             long tmp=hd + 1;
@@ -163,10 +165,12 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
             T element=buf[index];
             if(element != null) {
                 hd=tmp;
-                buf[index]=null;
                 size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
-                if(hd - low > 0)
-                    low=hd;
+                if(nullify) {
+                    buf[index]=null;
+                    if(hd - low > 0)
+                        low=hd;
+                }
                 buffer_full.signalAll();
             }
             return element;
@@ -177,21 +181,16 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
     }
 
     @Override
-    public T remove(boolean nullify) {
-        return remove();
-    }
-
-    @Override
     public List<T> removeMany(boolean nullify, int max_results, Predicate<T> filter) {
-        return removeMany(true, max_results, filter, LinkedList::new, LinkedList::add);
+        return removeMany(nullify, max_results, filter, LinkedList::new, LinkedList::add);
     }
 
     @Override
     public <R> R removeMany(boolean nullify, int max_results, Predicate<T> filter, Supplier<R> result_creator, BiConsumer<R,T> accumulator) {
         lock.lock();
         try {
-            Remover<R> remover=new Remover<>(max_results, filter, result_creator, accumulator);
-            forEach(remover, true);
+            Remover<R> remover=new Remover<R>(max_results, filter, result_creator, accumulator);
+            forEach(remover, nullify);
             return remover.getResult();
         }
         finally {
@@ -225,10 +224,9 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
         }
     }
 
-    /** Nulls elements between low and seqno and forwards low. Returns the number of nulled elements */
     @Override
     public int purge(long seqno, boolean force) {
-        int count=0;
+        int purged=0;
         lock.lock();
         try {
             if(seqno - low <= 0)  // ignore if seqno <= low
@@ -249,21 +247,17 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
                 int index=index(from);
                 if(buf[index] != null) {
                     buf[index]=null;
-                    size=Math.max(size-1, 0);
-                    count++;
+                    // size=Math.max(size-1, 0);
+                    purged++;
                 }
                 low++; from++;
-                hd=Math.max(hd, low);
+                hd=Math.max(hd,low);
             }
-            /*if(seqno - low > 0)
-                low=seqno;
-            if(force) {
-                if(seqno - hd > 0)
-                    hd=seqno;
-            }*/
+            if(force)
+                size=computeSize();
             if(low - tmp > 0)
                 buffer_full.signalAll();
-            return count;
+            return purged;
         }
         finally {
             lock.unlock();
@@ -279,7 +273,7 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
         if(from - to > 0) // same as if(from > to), but prevents long overflow
             return;
         int distance=(int)(to - from +1);
-        long start=hd;
+        long start=low;
         for(int i=0; i < distance; i++) {
             int index=index(from);
             T element=buf[index];
@@ -288,9 +282,6 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
                 break;
             if(nullify && element != null) {
                 buf[index]=null;
-                size=Math.max(size-1, 0);
-                if(from - hd > 0)
-                    hd=from;
                 if(from - low > 0)
                     low=from;
             }
@@ -298,7 +289,7 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
                 break;
             from++;
         }
-        if(nullify && hd - start > 0)
+        if(low - start > 0)
             buffer_full.signalAll();
     }
 
@@ -360,44 +351,9 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
 
 
 
-    protected class Remover<R> implements Visitor<T> {
-        protected final int          max_results;
-        protected int                num_results;
-        protected final Predicate<T> filter;
-        protected R                  result;
-        protected Supplier<R>        result_creator;
-        protected BiConsumer<R,T>    result_accumulator;
-
-        public Remover(int max_results, Predicate<T> filter, Supplier<R> creator, BiConsumer<R,T> accumulator) {
-            this.max_results=max_results;
-            this.filter=filter;
-            this.result_creator=creator;
-            this.result_accumulator=accumulator;
-        }
-
-        public R getResult() {
-            return result;
-        }
-
-        @GuardedBy("lock")
-        public boolean visit(long seqno, T element) {
-            if(element == null)
-                return false;
-            if(filter == null || filter.test(element)) {
-                if(result == null)
-                    result=result_creator.get();
-                result_accumulator.accept(result, element);
-                num_results++;
-            }
-            if(seqno - hd > 0)
-                hd=seqno;
-            return max_results == 0 || num_results < max_results;
-        }
-    }
-
     protected class FixedBufferIterator implements Iterator<T> {
         protected final T[] buffer;
-        protected long      current=low+1;
+        protected long      current=hd+1;
 
         public FixedBufferIterator(T[] buffer) {
             this.buffer=buffer;
@@ -412,8 +368,8 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
             if(!hasNext())
                 throw new NoSuchElementException();
             // if(current <= low)
-            if(low - current >= 0)
-                current=low+1;
+            if(hd - current >= 0)
+                current=hd+1;
             return buffer[index(current++)];
         }
 

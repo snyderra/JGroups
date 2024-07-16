@@ -476,13 +476,8 @@ public class BufferTest {
         buf.add(5, msg(5, true), dont_loopback_filter, Options.DEFAULT());
         buf.add(6, msg(6, true), dont_loopback_filter, Options.DEFAULT());
         assert buf.highestDelivered() == 6;
-        if(buf instanceof FixedBuffer)
-            for(int i=1; i <= 6; i++)
-                assert buf._get(i) == null;
-        else {
-            assert IntStream.rangeClosed(1,2).boxed().allMatch(n -> buf._get(n) == null);
-            assert IntStream.rangeClosed(3,6).boxed().allMatch(n -> buf._get(n) != null);
-        }
+        assert IntStream.rangeClosed(1,2).boxed().allMatch(n -> buf._get(n) == null);
+        assert IntStream.rangeClosed(3,6).boxed().allMatch(n -> buf._get(n) != null);
     }
 
     public void testAddAndRemove2(Buffer<Message> buf) {
@@ -530,19 +525,11 @@ public class BufferTest {
         buf.add(6,6); buf.add(7,7);
         buf.remove(false); buf.remove(false);
         long low=buf.low();
-        if(buf instanceof DynamicBuffer)
-            assert low == 5;
-        else
-            assert low == 7;
-        if(buf instanceof FixedBuffer)
-            for(int p: List.of(4, 5, 6, 7))
-                assert buf.purge(p) == 0;
-        else {
-            assert buf.purge(4) == 0;
-            assert buf.purge(5) == 0;
-            assert buf.purge(6) == 1;
-            assert buf.purge(7) == 1;
-        }
+        assert low == 5;
+        assert buf.purge(4) == 0;
+        assert buf.purge(5) == 0;
+        assert buf.purge(6) == 1;
+        assert buf.purge(7) == 1;
         System.out.println("buf = " + buf);
         for(long i=low; i <= 7; i++)
             assert buf._get(i) == null : "message with seqno=" + i + " is not null";
@@ -562,7 +549,7 @@ public class BufferTest {
     }
 
     public void testComputeSize(Buffer<Integer> buf) {
-        IntStream.rangeClosed(1,10).boxed().forEach(n -> buf.add(n,n));
+        IntStream.rangeClosed(1,10).forEach(n -> buf.add(n,n));
         System.out.println("buf = " + buf);
         assert buf.computeSize() == 10;
         buf.removeMany(false, 3);
@@ -575,7 +562,7 @@ public class BufferTest {
         assert buf.computeSize() == 3;
     }
 
-    public static void testComputeSize2(Buffer<Integer> buf) {
+    public void testComputeSize2(Buffer<Integer> buf) {
         buf.add(1, 1);
         System.out.println("buf = " + buf);
         assert buf.computeSize() == buf.size();
@@ -628,7 +615,7 @@ public class BufferTest {
     public void testRemove3(Buffer<Integer> buf) {
         IntStream.rangeClosed(1,5).forEach(n -> buf.add(n,n));
         System.out.println("buf = " + buf);
-        assertIndices(buf, 0, 5);
+        assertIndices(buf, 0, 0, 5);
 
         for(int i=1; i <= 5; i++) {
             Integer el=buf.remove();
@@ -756,10 +743,7 @@ public class BufferTest {
         assert buf.size() == 18 && buf.numMissing() == 2;
         List<Integer> list=buf.removeMany(false,0);
         assert list.size() == 12;
-        if(buf instanceof DynamicBuffer)
-            assertIndices(buf, 0, 12, 20);
-        else
-            assertIndices(buf, 12, 20);
+        assertIndices(buf, 0, 12, 20);
         assert buf.size() == 6 && buf.numMissing() == 2;
         buf.purge(12);
         assertIndices(buf, 12, 12, 20);
@@ -1285,10 +1269,7 @@ public class BufferTest {
             assert num != null && num == i;
         }
         System.out.println("buf after removal of seqno 15: " + buf);
-        if(buf instanceof DynamicBuffer)
-            assertIndices(buf, 0, 15, 50);
-        else
-            assertIndices(buf, 15, 50);
+        assertIndices(buf, 0, 15, 50);
         assert buf.size() == 35 && buf.numMissing() == 0;
 
         buf.purge(15);
@@ -1521,8 +1502,7 @@ public class BufferTest {
 
 
     public void testPurgeForce(Buffer<Integer> buf) {
-        for(int i=1; i <= 30; i++)
-            buf.add(i, i);
+        IntStream.rangeClosed(1,30).forEach(n -> buf.add(n,n));
         System.out.println("buf = " + buf);
         buf.purge(15, true);
         System.out.println("buf = " + buf);
@@ -1552,6 +1532,30 @@ public class BufferTest {
         assertIndices(buf, 40, 40, 40);
     }
 
+    public void testPurgeForceWithGaps(Buffer<Integer> buf) {
+        IntStream.rangeClosed(1,30).filter(n -> n % 2 == 0).forEach(n -> buf.add(n,n));
+        System.out.println("buf = " + buf);
+        int purged=buf.purge(15, true);
+        assert purged == 7;
+        System.out.println("buf = " + buf);
+        assertIndices(buf, 15, 15, 30);
+        for(int i=1; i <= 15; i++)
+            assert buf._get(i) == null;
+        for(int i=16; i<= 30; i++) {
+            if(i % 2 == 0)
+                assert buf._get(i) != null;
+            else
+                assert buf._get(i) == null;
+        }
+        assert buf.get(5) == null && buf.get(26) != null;
+
+        purged=buf.purge(30, true);
+        assert purged == 8;
+        System.out.println("buf = " + buf);
+        assertIndices(buf, 30, 30, 30);
+        assert buf.isEmpty();
+    }
+
     // Tests purge(40) followed by purge(20) - the second purge() should be ignored
     // https://issues.redhat.com/browse/JGRP-1872
     public void testPurgeLower(Buffer<Integer> buf) {
@@ -1578,22 +1582,15 @@ public class BufferTest {
 
     public void testCompact(Buffer<Integer> type) {
         Buffer<Integer> buf=type instanceof DynamicBuffer? new DynamicBuffer<>(3,10,0) : new FixedBuffer<>(80, 0);
-        for(int i=1; i <= 80; i++)
-            addAndGet(buf, i);
+        IntStream.rangeClosed(1,80).boxed().forEach(n -> buf.add(n,n));
         assert buf.size() == 80;
         assertIndices(buf, 0, 0, 80);
         List<Integer> list=buf.removeMany(false,60);
         assert list.size() == 60;
         assert list.get(0) == 1 && list.get(list.size() -1) == 60;
-        if(type instanceof DynamicBuffer)
-            assertIndices(buf, 0, 60, 80);
-        else
-            assertIndices(buf, 60, 80);
+        assertIndices(buf, 0, 60, 80);
         buf.purge(60);
-        if(type instanceof DynamicBuffer)
-            assertIndices(buf, 60, 60, 80);
-        else
-            assertIndices(buf, 60, 80);
+        assertIndices(buf, 60, 60, 80);
         assert buf.size() == 20;
         if(buf instanceof DynamicBuffer) {
             ((DynamicBuffer<?>)buf).compact();
@@ -1887,11 +1884,6 @@ public class BufferTest {
         assert buf.low() == low : "expected low=" + low + " but was " + buf.low();
         assert buf.highestDelivered() == hd : "expected hd=" + hd + " but was " + buf.highestDelivered();
         assert buf.high()  == hr : "expected hr=" + hr + " but was " + buf.high();
-    }
-
-    protected static <T> void assertIndices(Buffer<T> buf, long low, long high) {
-        assert buf.low() == low : String.format("expected low=%,d but was %,d", low, buf.low());
-        assert buf.high()  == high : String.format("expected hr=%,d but was %,d", high, buf.high());
     }
 
     protected static class Adder extends Thread {

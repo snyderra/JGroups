@@ -92,7 +92,9 @@ public abstract class Buffer<T> implements Iterable<T> {
 
     public abstract T _get(long seqno);
 
-    public abstract T remove();
+    public T remove() {
+        return remove(true);
+    }
 
     public abstract T remove(boolean nullify);
 
@@ -107,15 +109,20 @@ public abstract class Buffer<T> implements Iterable<T> {
                                      Supplier<R> result_creator, BiConsumer<R,T> accumulator);
 
     /**
-     * Removes all elements less than or equal to seqno from the table. Does this by nulling entire rows in the matrix
-     * and nulling all elements < index(seqno) of the first row that cannot be removed
-     * @param seqno
+     * Removes all elements <= seqno from the buffer. Does this by nulling all elements < index(seqno)
      */
     // used: in stable() [NAKACK3 only]
     public int purge(long seqno) {
         return purge(seqno, false);
     }
 
+    /**
+     * Purges (nulls) all elements <= seqno.
+     * @param seqno All elements <= seqno will be purged.
+     * @param force If false, seqno is max(seqno,hd), else max(seqno,high). In the latter case (seqno > hd), we might
+     *              purge elements that have not yet been received
+     * @return 0. The number of purged elements
+     */
     public abstract int purge(long seqno, boolean force);
 
     public void forEach(Visitor<T> visitor, boolean nullify) {
@@ -131,8 +138,11 @@ public abstract class Buffer<T> implements Iterable<T> {
 
     public abstract Stream<T> stream(long from, long to);
 
+    /** Iterates from hd to high and adds up non-null values. Caller must hold the lock. */
     @GuardedBy("lock")
-    public abstract int computeSize();
+    public int computeSize() {
+        return (int)stream().filter(Objects::nonNull).count();
+    }
 
     /** Returns the number of null elements in the range [hd+1 .. hr-1] excluding hd and hr */
     public int numMissing() {
@@ -275,6 +285,41 @@ public abstract class Buffer<T> implements Iterable<T> {
          */
         boolean visit(long seqno, T element);
     }
+
+    protected class Remover<R> implements Visitor<T> {
+        protected final int          max_results;
+        protected int                num_results;
+        protected final Predicate<T> filter;
+        protected R                  result;
+        protected Supplier<R>        result_creator;
+        protected BiConsumer<R,T>    result_accumulator;
+
+        public Remover(int max_results, Predicate<T> filter, Supplier<R> creator, BiConsumer<R,T> accumulator) {
+            this.max_results=max_results;
+            this.filter=filter;
+            this.result_creator=creator;
+            this.result_accumulator=accumulator;
+        }
+
+        public R getResult() {return result;}
+
+        @GuardedBy("lock")
+        public boolean visit(long seqno, T element) {
+            if(element == null)
+                return false;
+            if(filter == null || filter.test(element)) {
+                if(result == null)
+                    result=result_creator.get();
+                result_accumulator.accept(result, element);
+                num_results++;
+            }
+            size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
+            if(seqno - hd > 0)
+                hd=seqno;
+            return max_results == 0 || num_results < max_results;
+        }
+    }
+
 
     protected class NumDeliverable implements Visitor<T> {
         protected int num_deliverable=0;

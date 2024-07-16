@@ -132,24 +132,24 @@ public class DynamicBuffer<T> extends Buffer<T> {
             T[] row=getRow(row_index);
             int index=computeIndex(seqno);
             T existing_element=row[index];
-            if(existing_element == null) {
-                row[index]=element;
-                size++;
-                if(seqno - high > 0)
-                    high=seqno;
-                if(remove_filter != null && seqno-hd > 0) {
-                    forEach((seq, msg) -> {
-                        if(msg == null || !remove_filter.test(msg))
-                            return false;
-                        if(seq - hd > 0)
-                            hd=seq;
-                        size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
-                        return true;
-                    }, false);
-                }
-                return true;
+            if(existing_element != null)
+                return false;
+            row[index]=element;
+            size++;
+            if(seqno - high > 0)
+                high=seqno;
+            if(remove_filter != null && seqno-hd > 0) {
+                Visitor<T> v=(seq,msg) -> {
+                    if(msg == null || !remove_filter.test(msg))
+                        return false;
+                    if(seq - hd > 0)
+                        hd=seq;
+                    size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
+                    return true;
+                };
+                forEach(v, false);
             }
-            return false;
+            return true;
         }
         finally {
             lock.unlock();
@@ -247,12 +247,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
         }
     }
 
-
-    @Override
-    public T remove() {
-        return remove(true);
-    }
-
     /** Removes the next non-null element and nulls the index if nullify=true */
     @Override
     public T remove(boolean nullify) {
@@ -306,7 +300,7 @@ public class DynamicBuffer<T> extends Buffer<T> {
                             Supplier<R> result_creator, BiConsumer<R,T> accumulator) {
         lock.lock();
         try {
-            Remover<R> remover=new Remover<>(max_results, filter, result_creator, accumulator);
+            Remover<R> remover=new Remover<R>(max_results, filter, result_creator, accumulator);
             forEach(remover, nullify);
             return remover.getResult();
         }
@@ -317,11 +311,11 @@ public class DynamicBuffer<T> extends Buffer<T> {
 
 
     /**
-     * Removes all elements less than or equal to seqno from the table. Does this by nulling entire rows in the matrix
+     * Removes all elements less than or equal to seqno from the buffer. Does this by nulling entire rows in the matrix
      * and nulling all elements < index(seqno) of the first row that cannot be removed.
      * @param seqno All elements <= seqno will be nulled
      * @param force If true, we only ensure that seqno <= hr, but don't care about hd, and set hd=low=seqno.
-     * @return 0. This value is never used by {@link DynamicBuffer}, so it is <em>not</em> computed. Don't use it!
+     * @return 0. The number of purged elements
      */
     @Override
     public int purge(long seqno, boolean force) {
@@ -542,13 +536,6 @@ public class DynamicBuffer<T> extends Buffer<T> {
         }
     }
 
-    /** Iterates from low to hr and add up non-null values. Caller must hold the lock. */
-    @Override
-    @GuardedBy("lock")
-    public int computeSize() {
-        return (int)stream().filter(Objects::nonNull).count();
-    }
-
     /**
      * Returns a row. Creates a new row and inserts it at index if the row at index doesn't exist
      * @param index
@@ -632,7 +619,7 @@ public class DynamicBuffer<T> extends Buffer<T> {
     }
 
 
-    protected class Remover<R> implements Visitor<T> {
+    /*protected class Remover<R> implements Visitor<T> {
         protected final int          max_results;
         protected int                num_results;
         protected final Predicate<T> filter;
@@ -651,21 +638,20 @@ public class DynamicBuffer<T> extends Buffer<T> {
 
         @GuardedBy("lock")
         public boolean visit(long seqno, T element) {
-            if(element != null) {
-                if(filter == null || filter.test(element)) {
-                    if(result == null)
-                        result=result_creator.get();
-                    result_accumulator.accept(result, element);
-                    num_results++;
-                }
-                size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
-                if(seqno - hd > 0)
-                    hd=seqno;
-                return max_results == 0 || num_results < max_results;
+            if(element == null)
+                return false;
+            if(filter == null || filter.test(element)) {
+                if(result == null)
+                    result=result_creator.get();
+                result_accumulator.accept(result, element);
+                num_results++;
             }
-            return false;
+            size=Math.max(size-1, 0); // cannot be < 0 (well that would be a bug, but let's have this 2nd line of defense !)
+            if(seqno - hd > 0)
+                hd=seqno;
+            return max_results == 0 || num_results < max_results;
         }
     }
-
+*/
 }
 
