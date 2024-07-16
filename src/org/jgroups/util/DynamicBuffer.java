@@ -114,11 +114,11 @@ public class DynamicBuffer<T> extends Buffer<T> {
      * @param seqno
      * @param element
      * @param remove_filter If not null, a filter used to remove all consecutive messages passing the filter
-     * @param ignored
+     * @param __ Ignored
      * @return True if the element at the computed index was null, else false
      */
     @Override
-    public boolean add(long seqno, T element, Predicate<T> remove_filter, Options ignored) {
+    public boolean add(long seqno, T element, Predicate<T> remove_filter, Options __) {
         lock.lock();
         try {
             if(seqno - hd <= 0)

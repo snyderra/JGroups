@@ -476,8 +476,8 @@ public class BufferTest {
         buf.add(5, msg(5, true), dont_loopback_filter, Options.DEFAULT());
         buf.add(6, msg(6, true), dont_loopback_filter, Options.DEFAULT());
         assert buf.highestDelivered() == 6;
-        assert IntStream.rangeClosed(1,2).boxed().allMatch(n -> buf._get(n) == null);
-        assert IntStream.rangeClosed(3,6).boxed().allMatch(n -> buf._get(n) != null);
+        assert IntStream.rangeClosed(1,2).allMatch(n -> buf._get(n) == null);
+        assert IntStream.rangeClosed(3,6).allMatch(n -> buf._get(n) != null);
     }
 
     public void testAddAndRemove2(Buffer<Message> buf) {

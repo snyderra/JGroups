@@ -56,26 +56,8 @@ public class FixedBuffer<T> extends Buffer<T> implements Closeable {
 
     @Override public int capacity() {return buf.length;}
 
-    /*@Override
-    public int computeSize() {
-        if(high - low <= 0)
-            return 0;
-        int retval=0;
-        long from=low+1, to=high;
-        int distance=(int)(to - from +1);
-        for(int i=0; i < distance; i++,from++) {
-            int index=index(from);
-            T element=buf[index];
-            if(element != null)
-                retval++;
-        }
-        return retval;
-    }*/
-
-
     /**
      * Adds a new element to the buffer
-     *
      * @param seqno         The seqno of the element
      * @param element       The element
      * @param remove_filter
